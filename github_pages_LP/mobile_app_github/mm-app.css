@@ -648,6 +648,7 @@
         .detail-scroll { max-height: 55vh; overflow: auto; margin-top: 12px; padding-inline-end: 4px; }
         .detail-empty { color: var(--muted); padding: 12px 0; font-size: 0.88rem; }
         .detail-h { font-weight: 800; font-size: 0.88rem; margin: 14px 0 8px; display: flex; align-items: center; gap: 6px; }
+        .detail-h.purchases { color: #38bdf8; }
         .detail-h.sales { color: #60a5fa; }
         .detail-h.returns { color: #f87171; }
         .detail-h.expenses { color: #fbbf24; }
@@ -670,7 +671,13 @@
             padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 0.85rem;
         }
         .line-row strong { color: #f87171; }
+        .line-row.purchase-row strong { color: #38bdf8; }
+        .line-row .purchase-co { color: var(--muted); font-weight: 600; font-size: 0.82rem; }
         .line-row .amt { font-weight: 800; color: #fbbf24; }
+        .line-row .amt.purchase { color: #0ea5e9; }
+        .mm-privacy-off { display: none !important; }
+        .mm-privacy-note { color: var(--muted); font-size: 0.84rem; display: flex; align-items: center; gap: 8px; }
+        .mm-privacy-note i { color: #f59e0b; }
 
         .kpi-inventory { background: linear-gradient(160deg, rgba(99, 102, 241, 0.14), var(--surface-2)); }
         .kpi-inventory .icon { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; }

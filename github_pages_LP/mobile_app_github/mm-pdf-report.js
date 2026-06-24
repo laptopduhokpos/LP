@@ -35,13 +35,17 @@ function mmBuildTodayReportHtml(ctx) {
     const detail = ctx.detail || {};
     const inv = ctx.inv || {};
     const debt = ctx.debt || {};
-    const sales = Array.isArray(detail.sales) ? detail.sales : [];
+    const privacy = ctx.privacy || {};
+    const hideProfit = !!privacy.hideProfit;
+    const hideSalesDetail = !!privacy.hideSalesDetail;
+    const sales = hideSalesDetail ? [] : (Array.isArray(detail.sales) ? detail.sales : []);
     const returns = Array.isArray(detail.returns) ? detail.returns : [];
     const expenses = Array.isArray(detail.expenses) ? detail.expenses : [];
+    const purchases = Array.isArray(detail.purchases) ? detail.purchases : [];
     const dayLabel = mmReportDateLabel(ctx.dayKey);
     const cur = ctx.currency === "USD" ? "دۆلار ($)" : "دینار (د.ع)";
     const ver = esc(ctx.version || "");
-    const net = fmt(dash.netProfitToday);
+    const net = hideProfit ? "— · شاردراوە" : fmt(dash.netProfitToday);
     const salesT = fmt(dash.salesToday);
     const expT = fmt(dash.expensesToday);
     const retT = mmSumReturns(returns, fmt);
@@ -50,7 +54,11 @@ function mmBuildTodayReportHtml(ctx) {
     sales.slice(0, 25).forEach(function (s, i) {
         salesRows += "<tr><td>" + (i + 1) + "</td><td>#" + esc(s.id) + "</td><td>" + esc(s.cashier || "—") + "</td><td>" + esc(s.payment_method || "—") + "</td><td class=\"num\">" + fmt(s.total) + "</td></tr>";
     });
-    if (!salesRows) salesRows = "<tr><td colspan=\"5\" class=\"empty\">— هیچ فرۆشتنێک نییە —</td></tr>";
+    if (!salesRows) {
+        salesRows = hideSalesDetail
+            ? "<tr><td colspan=\"5\" class=\"empty\">— وردەکاری فرۆشتن شاردراوە —</td></tr>"
+            : "<tr><td colspan=\"5\" class=\"empty\">— هیچ فرۆشتنێک نییە —</td></tr>";
+    }
 
     let retRows = "";
     returns.slice(0, 12).forEach(function (r) {
@@ -63,6 +71,12 @@ function mmBuildTodayReportHtml(ctx) {
         expRows += "<tr><td>" + esc(e.type || "—") + "</td><td>" + esc(e.note || "") + "</td><td class=\"num\">" + fmt(e.amount) + "</td></tr>";
     });
     if (!expRows) expRows = "<tr><td colspan=\"3\" class=\"empty\">—</td></tr>";
+
+    let purchaseRows = "";
+    purchases.slice(0, 20).forEach(function (p) {
+        purchaseRows += "<tr><td>" + esc(p.invoiceNo || "—") + "</td><td>" + esc(p.company || "—") + "</td><td class=\"num\">" + fmt(p.total) + "</td></tr>";
+    });
+    if (!purchaseRows) purchaseRows = "<tr><td colspan=\"3\" class=\"empty\">—</td></tr>";
 
     return "<!DOCTYPE html><html lang=\"ku\" dir=\"rtl\"><head><meta charset=\"UTF-8\"><title>پوختەی ئەمڕۆ — " + esc(ctx.shopLabel) + "</title><style>" +
         "@page { size: A4 portrait; margin: 10mm 12mm; }" +
@@ -109,8 +123,11 @@ function mmBuildTodayReportHtml(ctx) {
         "<span class=\"badge\">" + (ver ? "v" + ver : "PDF") + "</span></div>" +
         "<div class=\"shop\">" + esc(ctx.shopLabel || ctx.shopEmail || "دووکان") + "</div>" +
         "<div class=\"date\"><i>📅</i> " + esc(dayLabel) + " · دراو: " + esc(cur) + "</div></div>" +
-        "<div class=\"note\">تەنها بینین — ژمارەکان لە POS sync دەکرێن · " + esc(ctx.shopEmail || "") + "</div>" +
-        "<div class=\"hero\"><div class=\"lbl\">قازانجی خاو (ئەمڕۆ)</div><div class=\"val\">" + net + "</div><div class=\"sub\">دوای مەسرەف و گەڕانەوە</div></div>" +
+        "<div class=\"note\">تەنها بینین — ژمارەکان لە POS sync دەکرێن · " + esc(ctx.shopEmail || "") +
+        (hideProfit || hideSalesDetail ? " · <strong>هەندێک بەش شاردراوە</strong>" : "") + "</div>" +
+        (hideProfit
+            ? "<div class=\"hero\" style=\"background:linear-gradient(160deg,#f1f5f9,#e2e8f0);border-color:#94a3b8;\"><div class=\"lbl\">قازانجی خاو</div><div class=\"val\" style=\"color:#64748b;font-size:1.35rem;\">— · شاردراوە</div><div class=\"sub\">لە ڕێکخستنەکانی POS شاردراوە</div></div>"
+            : "<div class=\"hero\"><div class=\"lbl\">قازانجی خاو (ئەمڕۆ)</div><div class=\"val\">" + net + "</div><div class=\"sub\">دوای مەسرەف و گەڕانەوە</div></div>") +
         "<div class=\"grid\">" +
         "<div class=\"stat sales\"><div class=\"l\">فرۆشتن</div><div class=\"v\">" + salesT + "</div></div>" +
         "<div class=\"stat exp\"><div class=\"l\">مەسرەف</div><div class=\"v\">" + expT + "</div></div>" +
@@ -125,6 +142,8 @@ function mmBuildTodayReportHtml(ctx) {
         "<p>کڕیار: <strong>" + fmt(debt.customerReceivables) + "</strong> (" + String(Number(debt.customerDebtorCount || 0)) + ")</p>" +
         "<p>کڕین کۆمپانیا: <strong>" + fmt(debt.supplierPayables) + "</strong> (" + String(Number(debt.supplierDebtCount || 0)) + ")</p></div>" +
         "</div>" +
+        "<div class=\"sec\"><h3>کڕین (" + purchases.length + ")</h3>" +
+        "<table><thead><tr><th>ژمارەی پسوولە</th><th>کۆمپانیا</th><th>بڕ</th></tr></thead><tbody>" + purchaseRows + "</tbody></table></div>" +
         "<div class=\"sec\"><h3>فرۆشتن (" + sales.length + ")</h3>" +
         "<table><thead><tr><th>#</th><th>پسوولە</th><th>کاشێر</th><th>پارەدان</th><th>کۆ</th></tr></thead><tbody>" + salesRows + "</tbody></table></div>" +
         "<div class=\"cols\">" +

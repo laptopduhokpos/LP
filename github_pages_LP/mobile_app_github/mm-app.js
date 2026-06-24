@@ -1,7 +1,7 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.15.86";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.15.89";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -241,7 +241,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 const st = mmShopHub[key] || mmEnsureHubState(key);
                 const dash = st.dash || {};
                 const inv = st.inv || {};
-                const net = dash.netProfitToday;
+                const priv = mmPrivacyFromDoc(dash);
+                const net = priv.hideProfit ? null : dash.netProfitToday;
                 const sales = dash.salesToday;
                 const out = Number(inv.outOfStock || 0);
                 const low = Number(inv.lowStock || 0);
@@ -253,7 +254,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 html += '<button type="button" class="mm-shop-card' + (isActive ? " active" : "") + '" data-mm-shop="' + esc(key) + '" style="--shop-accent:' + mmShopColor(acc) + '">' +
                     '<div class="mm-shop-card-top"><div class="mm-shop-name">' + esc(mmShopLabel(acc)) + '</div>' +
                     '<span class="mm-shop-status ' + statusCls + '" title="sync"></span></div>' +
-                    '<div class="mm-shop-net">' + (st.dash ? mmFormatHubMoney(st, net) : "—") + '</div>' +
+                    '<div class="mm-shop-net">' + (st.dash ? (priv.hideProfit ? MM_PRIVACY_HIDDEN : mmFormatHubMoney(st, net)) : "—") + '</div>' +
                     '<div class="mm-shop-meta">فرۆشتن: ' + (st.dash ? mmFormatHubMoney(st, sales) : "—") + '</div>' +
                     (badges ? '<div class="mm-shop-badges">' + badges + '</div>' : '') +
                     '</button>';
@@ -796,6 +797,24 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         let mobileAmountMeta = { amountCurrency: "IQD", posDisplayCurrency: "IQD", syncVersion: 3, usdRatePerOne: 0 };
+        const MM_PRIVACY_HIDDEN = "— · شاردراوە";
+
+        function mmPrivacyFromDoc(d) {
+            const doc = d || {};
+            const p = doc.privacy || {};
+            const m = doc.meta || {};
+            return {
+                hideProfit: !!(p.hideProfit || m.hideProfit),
+                hideSalesDetail: !!(p.hideSalesDetail || m.hideSalesDetail)
+            };
+        }
+
+        function mmApplyProfitPrivacyUi(hideProfit) {
+            const kpiFeatured = document.querySelector(".kpi-featured");
+            const homeNetTile = document.querySelector(".home-mini.net");
+            if (kpiFeatured) kpiFeatured.classList.toggle("mm-privacy-off", !!hideProfit);
+            if (homeNetTile) homeNetTile.classList.toggle("mm-privacy-off", !!hideProfit);
+        }
 
         function getMobileDisplayCurrency() {
             var m = String(mobileAmountMeta.posDisplayCurrency || mobileAmountMeta.amountCurrency || "").toUpperCase();
@@ -1693,6 +1712,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 kpiExpenses.textContent = formatMobileMoney(0);
                 kpiNet.textContent = formatMobileMoney(0);
                 kpiInvoices.textContent = "0";
+                mmApplyProfitPrivacyUi(false);
                 metaEl.innerHTML = '<i class="fas fa-clock"></i> دوایین نوێکردنەوە: هێشتا داتا نییە';
                 updateHomeSyncText("دوایین sync: هێشتا داتا نییە");
                 const hNet0 = document.getElementById("homeNet");
@@ -1703,9 +1723,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmSnapDashboard = null;
                 return;
             }
+            const priv = mmPrivacyFromDoc(d);
+            mmApplyProfitPrivacyUi(priv.hideProfit);
             kpiSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
             kpiExpenses.textContent = formatMoneyIqd(normalizeMobileIqd(d.expensesToday));
-            kpiNet.textContent = formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
+            kpiNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             kpiInvoices.textContent = String(Number(d.invoicesCountToday || 0));
             const ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate() : new Date();
             const syncTxt = "دوایین نوێکردنەوە: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1713,7 +1735,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             updateHomeSyncText("دوایین sync: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
             const hNet = document.getElementById("homeNet");
             const hSales = document.getElementById("homeSales");
-            if (hNet) hNet.textContent = formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
+            if (hNet) hNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             if (hSales) hSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
             if (!opts.silent) setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
             mmSnapDashboard = Object.assign({}, d);
@@ -1788,16 +1810,25 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 return;
             }
             const meta = data.meta || {};
+            const priv = mmPrivacyFromDoc(data);
             setMobileAmountMeta(data);
-            const sales = Array.isArray(data.sales) ? data.sales : [];
+            const sales = priv.hideSalesDetail ? [] : (Array.isArray(data.sales) ? data.sales : []);
             const ret = Array.isArray(data.returns) ? data.returns : [];
             const exp = Array.isArray(data.expenses) ? data.expenses : [];
+            const purchases = Array.isArray(data.purchases) ? data.purchases : [];
             if (detailMeta) {
                 detailMeta.textContent = "ڕۆژ: " + (meta.businessDate || dayKey) + (meta.truncatedSales ? " · بەشێک لە پسوولەکان" : "");
             }
             let html = "";
-            html += '<div class="detail-h sales"><i class="fas fa-receipt"></i> فرۆشتن (' + sales.length + ")</div>";
-            if (!sales.length) html += '<div class="detail-empty">—</div>';
+            html += '<div class="detail-h purchases"><i class="fas fa-truck"></i> کڕین (' + purchases.length + ")</div>";
+            if (!purchases.length) html += '<div class="detail-empty">—</div>';
+            else purchases.slice(0, 100).forEach((p) => {
+                html += '<div class="line-row purchase-row"><span><strong>' + esc(p.invoiceNo || "—") + '</strong><span class="purchase-co"> · ' + esc(p.company || "—") + "</span></span><span class=\"amt purchase\">" + formatMoneyIqd(normalizeMobileIqd(p.total)) + "</span></div>";
+            });
+            html += '<div class="detail-h sales"><i class="fas fa-receipt"></i> فرۆشتن (' + (priv.hideSalesDetail ? "—" : sales.length) + ")</div>";
+            if (priv.hideSalesDetail) {
+                html += '<div class="detail-empty mm-privacy-note"><i class="fas fa-eye-slash"></i> وردەکاری فرۆشتن شاردراوە لە ڕێکخستنەکانی POS</div>';
+            } else if (!sales.length) html += '<div class="detail-empty">—</div>';
             else {
                 sales.forEach((s) => {
                     const itemsArr = groupSaleLineItems(Array.isArray(s.items) ? s.items : []);
@@ -1826,9 +1857,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             });
             detailContent.innerHTML = html;
             mmSnapDetail = {
-                sales: sales.slice(),
+                sales: priv.hideSalesDetail ? [] : sales.slice(),
                 returns: ret.slice(),
                 expenses: exp.slice(),
+                purchases: purchases.slice(),
+                privacy: Object.assign({}, priv),
                 meta: Object.assign({}, meta)
             };
             mmSnapDetailDayKey = dayKey;
@@ -1858,6 +1891,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     dayKey: mmSnapDetailDayKey || getBusinessDateKey(new Date()),
                     dashboard: mmSnapDashboard,
                     detail: mmSnapDetail || {},
+                    privacy: mmPrivacyFromDoc(Object.assign({}, mmSnapDashboard || {}, mmSnapDetail || {})),
                     inv: mmSnapInvSummary || {},
                     debt: mmSnapDebtSummary || {},
                     currency: getMobileDisplayCurrency(),
