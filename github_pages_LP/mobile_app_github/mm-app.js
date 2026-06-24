@@ -1,7 +1,7 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.32";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.35";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
