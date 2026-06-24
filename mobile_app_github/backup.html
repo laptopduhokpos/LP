@@ -116,13 +116,23 @@
             el.hidden = false;
             el.textContent = t;
         }
-        function buildDlUrl(posBase, pin, name) {
-            return posBase + "/?action=mobile_download_backup&pin=" + encodeURIComponent(pin) + "&name=" + encodeURIComponent(name);
+        function mmBackupFetchList(posBase, pin) {
+            var fd = new FormData();
+            fd.append("action", "mobile_list_backups");
+            fd.append("pin", pin);
+            return fetch(posBase + "/", { method: "POST", body: fd, credentials: "omit" });
+        }
+        function mmBackupFetchDownload(posBase, pin, name) {
+            var fd = new FormData();
+            fd.append("action", "mobile_download_backup");
+            fd.append("pin", pin);
+            fd.append("name", name);
+            return fetch(posBase + "/", { method: "POST", body: fd, credentials: "omit" });
         }
         function dlBtnLabel() {
             return mmIsIosStandalone() ? '<i class="fas fa-share-square"></i> Save' : '<i class="fas fa-download"></i> داونلۆد';
         }
-        function mmDownloadBackupFile(dlUrl, fileName, btn) {
+        function mmDownloadBackupFile(posBase, pin, fileName, btn) {
             if (btn) {
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -132,7 +142,7 @@
                 btn.disabled = false;
                 btn.innerHTML = dlBtnLabel();
             }
-            fetch(dlUrl)
+            mmBackupFetchDownload(posBase, pin, fileName)
                 .then(function (res) {
                     if (!res.ok) throw new Error("HTTP " + res.status);
                     return res.blob();
@@ -142,23 +152,24 @@
                     if (navigator.canShare && navigator.canShare({ files: [file] })) {
                         return navigator.share({ files: [file], title: fileName });
                     }
-                    window.location.href = dlUrl;
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement("a");
+                    a.href = url;
+                    a.download = fileName;
+                    a.click();
+                    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
                 })
                 .then(function () { resetBtn(); })
                 .catch(function (err) {
                     resetBtn();
                     if (err && err.name === "AbortError") return;
-                    window.location.href = dlUrl;
+                    showErr("داونلۆد سەرنەکەوت: " + String(err.message || err));
                 });
         }
-        function bindDlButton(btn, dlUrl, fileName) {
+        function bindDlButton(btn, posBase, pin, fileName) {
             btn.addEventListener("click", function (e) {
                 e.preventDefault();
-                if (mmIsIosStandalone() || mmIsIos()) {
-                    mmDownloadBackupFile(dlUrl, fileName, btn);
-                } else {
-                    window.location.href = dlUrl;
-                }
+                mmDownloadBackupFile(posBase, pin, fileName, btn);
             });
         }
         function renderList(items, posBase, pin) {
@@ -178,7 +189,7 @@
             }).join("");
             items.forEach(function (it, idx) {
                 var btn = box.querySelector('[data-dl-idx="' + idx + '"]');
-                if (btn) bindDlButton(btn, buildDlUrl(posBase, pin, it.name || "backup.zip"), it.name || "backup.zip");
+                if (btn) bindDlButton(btn, posBase, pin, it.name || "backup.zip");
             });
         }
         function loadList() {
@@ -198,7 +209,7 @@
             try { localStorage.setItem("mm_pos_url", posBase); localStorage.setItem("mm_backup_pin", pin); } catch (e) {}
             var box = document.getElementById("list");
             if (box) box.innerHTML = '<div class="empty"><i class="fas fa-spinner fa-spin"></i></div>';
-            fetch(posBase + "/?action=mobile_list_backups&pin=" + encodeURIComponent(pin))
+            mmBackupFetchList(posBase, pin)
                 .then(function (res) {
                     return res.json().then(function (data) {
                         if (!res.ok || data.status !== "success") throw new Error(data.message || ("HTTP " + res.status));
@@ -227,6 +238,14 @@
             var pin = qs.get("pin") || "";
             if (!pos) { try { pos = localStorage.getItem("mm_pos_url") || ""; } catch (e) {} }
             if (!pin) { try { pin = localStorage.getItem("mm_backup_pin") || ""; } catch (e) {} }
+            if (pin && qs.get("pin")) {
+                try { localStorage.setItem("mm_backup_pin", pin.replace(/\D/g, "")); } catch (e) {}
+                if (history.replaceState) {
+                    var clean = location.pathname + "?pos=" + encodeURIComponent(pos || guessPosBase());
+                    if (qs.get("auto") === "1") clean += "&auto=1";
+                    history.replaceState(null, "", clean);
+                }
+            }
             if (!pos) pos = guessPosBase();
             if (posEl) posEl.value = pos;
             if (pinEl) pinEl.value = pin;

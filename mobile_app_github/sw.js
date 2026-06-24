@@ -1,9 +1,12 @@
 /**
  * PWA service worker — Mobile Manager (public/mobile_manager/)
  */
-const CACHE_NAME = "ld-manager-pwa-v21";
+const CACHE_NAME = "ld-manager-pwa-v22";
 const SHELL = [
     "./index.html",
+    "./mm-app.css",
+    "./mm-app.js",
+    "./backup.html",
     "./manifest.json",
     "./assets/brand/laptop-duhok-logo.png",
     "./assets/icons/icon-192.png",
