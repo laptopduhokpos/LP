@@ -1,6 +1,7 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.15.86";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -473,6 +474,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let mmBackupItems = [];
         let activeChannelId = "";
         let refreshBusy = false;
+        let mmSnapDashboard = null;
+        let mmSnapDetail = null;
+        let mmSnapInvSummary = null;
+        let mmSnapDebtSummary = null;
+        let mmSnapDetailDayKey = "";
         const refreshBtn = document.getElementById("refreshBtn");
         const refreshToast = document.getElementById("refreshToast");
         const ptrIndicator = document.getElementById("ptrIndicator");
@@ -1120,10 +1126,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (debtSupTotal) debtSupTotal.textContent = "0";
                 if (debtCustCount) debtCustCount.textContent = "0 کڕیار";
                 if (debtSupCount) debtSupCount.textContent = "0 کڕین کۆمپانیا";
+                mmSnapDebtSummary = null;
                 return;
             }
             debtDocSynced = true;
             const summary = data.summary || {};
+            mmSnapDebtSummary = Object.assign({}, summary);
             const meta = data.meta || {};
             setMobileAmountMeta(data);
             if (debtCustTotal) debtCustTotal.textContent = formatMoneyIqd(normalizeMobileIqd(summary.customerReceivables || 0));
@@ -1692,6 +1700,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (hNet0) hNet0.textContent = formatMobileMoney(0);
                 if (hSales0) hSales0.textContent = formatMobileMoney(0);
                 if (!opts.silent) setStatus("چاوەڕێی یەکەم sync", false);
+                mmSnapDashboard = null;
                 return;
             }
             kpiSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
@@ -1707,6 +1716,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (hNet) hNet.textContent = formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             if (hSales) hSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
             if (!opts.silent) setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
+            mmSnapDashboard = Object.assign({}, d);
         }
 
         function applyInventoryData(data) {
@@ -1725,6 +1735,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 invContent.innerHTML = '<div class="detail-empty">هێشتا داتای کۆگە نییە.<br><br>لە POS: ڕێکخستن → Firebase sync چالاک بکە، پاشان Ctrl+F5.<br>دوای ≈١٢ چرکە یان دوای جەرد/فرۆشتن داتا دێت.<br><br><button type="button" class="btn-ghost" onclick="document.getElementById(\'refreshBtn\')&&document.getElementById(\'refreshBtn\').click()" style="margin-top:8px;width:100%;"><i class="fas fa-arrows-rotate"></i> Refresh</button></div>';
                 if (invMeta) invMeta.textContent = "کۆگە · جەرد";
                 if (invWhBadge) invWhBadge.classList.add("hidden");
+                mmSnapInvSummary = null;
                 return;
             }
             invDocSynced = true;
@@ -1754,6 +1765,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             invCategoriesCache = categories.slice();
             invSessionsCache = sessions;
             invRecentCache = recent;
+            mmSnapInvSummary = Object.assign({}, summary);
             refreshInventoryView();
             bindInventoryFilters();
             bindInvSubTabs();
@@ -1771,6 +1783,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!data) {
                 detailContent.innerHTML = '<div class="detail-empty">هێشتا وردەکاری نییە. لە لاپتۆپ «ئێستا هاوکات بکە» بکە.</div>';
                 if (detailMeta) detailMeta.textContent = "ڕۆژ: " + dayKey;
+                mmSnapDetail = null;
+                mmSnapDetailDayKey = dayKey;
                 return;
             }
             const meta = data.meta || {};
@@ -1811,6 +1825,53 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 html += '<div class="line-row"><span>' + esc(e.type || "") + " " + esc(e.note || "") + '</span><span class="amt">' + formatMoneyIqd(normalizeMobileIqd(e.amount)) + "</span></div>";
             });
             detailContent.innerHTML = html;
+            mmSnapDetail = {
+                sales: sales.slice(),
+                returns: ret.slice(),
+                expenses: exp.slice(),
+                meta: Object.assign({}, meta)
+            };
+            mmSnapDetailDayKey = dayKey;
+        }
+
+        async function mmExportTodayPdfReport() {
+            if (!activeChannelId) {
+                showRefreshToast("سەرەتا چوونەژوورەوە بکە", true);
+                return;
+            }
+            const pdfBtn = document.getElementById("mmPdfTodayBtn");
+            const homePdfBtn = document.getElementById("homeGoPdf");
+            if (pdfBtn) { pdfBtn.disabled = true; pdfBtn.classList.add("spinning"); }
+            if (homePdfBtn) homePdfBtn.disabled = true;
+            try {
+                if (navigator.onLine && !refreshBusy) {
+                    await manualRefreshAll({ silent: true });
+                }
+                if (!mmSnapDashboard) {
+                    showRefreshToast("هێشتا داتا نییە — Refresh بکە", true);
+                    return;
+                }
+                const acc = mmAccountByEmail(activeChannelId);
+                mmPrintTodaySummary({
+                    shopLabel: mmShopLabel(acc || { email: activeChannelId }),
+                    shopEmail: activeChannelId,
+                    dayKey: mmSnapDetailDayKey || getBusinessDateKey(new Date()),
+                    dashboard: mmSnapDashboard,
+                    detail: mmSnapDetail || {},
+                    inv: mmSnapInvSummary || {},
+                    debt: mmSnapDebtSummary || {},
+                    currency: getMobileDisplayCurrency(),
+                    version: window.MM_APP_VERSION || "",
+                    formatMoney: formatMoneyIqd,
+                    esc: esc
+                });
+                showRefreshToast("PDF ئامادەیە — Print / Save as PDF", false);
+            } catch (e) {
+                showRefreshToast("PDF سەرنەکەوت", true);
+            } finally {
+                if (pdfBtn) { pdfBtn.disabled = false; pdfBtn.classList.remove("spinning"); }
+                if (homePdfBtn) homePdfBtn.disabled = false;
+            }
         }
 
         async function manualRefreshAll(opts) {
@@ -1973,6 +2034,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         if (homeGoDebt) homeGoDebt.addEventListener("click", () => switchMobileTab("debt"));
         const homeGoBackup = document.getElementById("homeGoBackup");
         if (homeGoBackup) homeGoBackup.addEventListener("click", () => switchMobileTab("backup"));
+        const homeGoPdf = document.getElementById("homeGoPdf");
+        if (homeGoPdf) homeGoPdf.addEventListener("click", () => mmExportTodayPdfReport());
+        const mmPdfTodayBtn = document.getElementById("mmPdfTodayBtn");
+        if (mmPdfTodayBtn) mmPdfTodayBtn.addEventListener("click", () => mmExportTodayPdfReport());
         document.getElementById("logoutBtn").addEventListener("click", () => signOut(auth));
         const logoutBtnHome = document.getElementById("logoutBtnHome");
         if (logoutBtnHome) logoutBtnHome.addEventListener("click", () => signOut(auth));
@@ -2128,9 +2193,38 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
         });
 
-        if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(function () {});
+        function mmRegisterServiceWorker() {
+            if (!("serviceWorker" in navigator)) return;
+            var ver = String(window.MM_APP_VERSION || "1");
+            var swUrl = "./sw.js?v=" + encodeURIComponent(ver);
+            navigator.serviceWorker.register(swUrl, { scope: "./", updateViaCache: "none" })
+                .then(function (reg) {
+                    function tryActivateUpdate() {
+                        if (!reg.waiting) return;
+                        reg.waiting.postMessage({ type: "SKIP_WAITING" });
+                        showRefreshToast("وەشانی نوێ دامەزرا — refresh…", false);
+                        setTimeout(function () { location.reload(); }, 400);
+                    }
+                    reg.addEventListener("updatefound", function () {
+                        var nw = reg.installing;
+                        if (!nw) return;
+                        nw.addEventListener("statechange", function () {
+                            if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                                tryActivateUpdate();
+                            }
+                        });
+                    });
+                    tryActivateUpdate();
+                    setInterval(function () { reg.update().catch(function () {}); }, 5 * 60 * 1000);
+                })
+                .catch(function () {});
+            navigator.serviceWorker.addEventListener("controllerchange", function () {
+                if (window._mmSwReloading) return;
+                window._mmSwReloading = true;
+                location.reload();
+            });
         }
+        mmRegisterServiceWorker();
 
         const appShell = document.getElementById("appShell");
 
