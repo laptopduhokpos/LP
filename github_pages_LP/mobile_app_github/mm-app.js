@@ -1,7 +1,7 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.31";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.32";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -21,6 +21,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let mmAccounts = [];
         const mmShopHub = {};
         let mmHubBooting = false;
+        let mmSwitchingShop = false;
 
         function mmEncodeSecret(s) {
             try { return btoa(unescape(encodeURIComponent(String(s || "")))); } catch (e) { return String(s || ""); }
@@ -115,6 +116,31 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!state) return;
             state.invFull = data || null;
             state.inv = data && data.summary ? data.summary : null;
+        }
+        function mmGetShopFirestore(channelId) {
+            const em = mmHubKey(channelId);
+            const acc = mmAccountByEmail(em);
+            if (acc) {
+                const st = mmShopHub[em] || {};
+                const appName = st.appName || ("mm-shop-" + acc.id);
+                try {
+                    const fbApp = mmGetSecondaryApp(appName);
+                    const fbAuth = getAuth(fbApp);
+                    if (fbAuth.currentUser && String(fbAuth.currentUser.email || "").toLowerCase() === em) {
+                        return getFirestore(fbApp);
+                    }
+                } catch (e) {}
+            }
+            if (auth.currentUser && String(auth.currentUser.email || "").toLowerCase() === em) {
+                return db;
+            }
+            return null;
+        }
+        function mmTeardownPrimaryListeners() {
+            if (unsub) { unsub(); unsub = null; }
+            if (unsubDetail) { unsubDetail(); unsubDetail = null; }
+            if (unsubInventory) { unsubInventory(); unsubInventory = null; }
+            if (unsubDebt) { unsubDebt(); unsubDebt = null; }
         }
         function mmTeardownHub(email) {
             const key = mmHubKey(email);
@@ -219,19 +245,32 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const acc = mmAccountByEmail(em);
             if (!acc) return;
             mmSetActiveEmail(em);
+            activeChannelId = em;
+            mmTeardownPrimaryListeners();
             mmApplyShopHubToUi(em);
-            if (auth.currentUser && String(auth.currentUser.email || "").toLowerCase() === em) {
-                activeChannelId = em;
+            await mmStartHubForAccount(acc);
+            mmApplyShopHubToUi(em);
+            const shopDb = mmGetShopFirestore(em);
+            if (shopDb) {
                 mmRebindShopListeners(em);
-                setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
                 mmRenderShopsHub();
                 mmRenderShopSwitcher();
+                showRefreshToast(mmShopLabel(acc) + " ✓", false);
+            } else {
+                showRefreshToast("تێپەڕەوشە هەڵەیە — دووبارە بنووسە", true);
+                mmOpenReauthShopModal(acc);
                 return;
             }
-            try {
-                await signInWithEmailAndPassword(auth, acc.email, mmDecodeSecret(acc.passEnc));
-            } catch (e) {
-                showRefreshToast("گۆڕینی دووکان سەرنەکەوت", true);
+            const cur = auth.currentUser ? String(auth.currentUser.email || "").toLowerCase() : "";
+            if (cur !== em) {
+                mmSwitchingShop = true;
+                try {
+                    await signInWithEmailAndPassword(auth, acc.email, mmDecodeSecret(acc.passEnc));
+                } catch (e) {
+                    /* hub Firestore already active */
+                } finally {
+                    mmSwitchingShop = false;
+                }
             }
         }
         function mmApplyShopHubToUi(email) {
@@ -346,6 +385,42 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         function mmCloseShopModal() {
             const m = document.getElementById("mmShopModal");
             if (m) { m.classList.add("hidden"); m.setAttribute("aria-hidden", "true"); }
+        }
+        function mmOpenReauthShopModal(acc) {
+            const body = document.getElementById("mmShopModalBody");
+            const title = document.getElementById("mmShopModalTitle");
+            const m = document.getElementById("mmShopModal");
+            if (!body || !m || !acc) return;
+            if (title) title.innerHTML = '<i class="fas fa-key"></i> ' + esc(mmShopLabel(acc));
+            body.innerHTML =
+                '<p style="font-size:0.8rem;color:var(--muted);margin:0 0 10px;line-height:1.5;">تێپەڕەوشەی Firebase بۆ <strong dir="ltr">' + esc(acc.email) + '</strong></p>' +
+                '<input id="mmReauthPass" type="password" dir="ltr" autocomplete="current-password" placeholder="تێپەڕەوشە" style="width:100%;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--input-bg);color:var(--text);margin-bottom:12px;">' +
+                '<button type="button" id="mmReauthSubmit" class="btn-primary" style="width:100%;"><i class="fas fa-right-to-bracket"></i> چوونەژوورەوە</button>';
+            const submit = document.getElementById("mmReauthSubmit");
+            const passInput = document.getElementById("mmReauthPass");
+            if (submit) {
+                submit.addEventListener("click", async function () {
+                    const password = passInput ? passInput.value : "";
+                    if (!password) return;
+                    submit.disabled = true;
+                    const testApp = mmGetSecondaryApp("mm-reauth-" + Date.now());
+                    const testAuth = getAuth(testApp);
+                    try {
+                        await signInWithEmailAndPassword(testAuth, acc.email, password);
+                        await signOut(testAuth);
+                    } catch (e) {
+                        alert("تێپەڕەوشە هەڵەیە — لە POS → Firebase sync بپشکنە.");
+                        submit.disabled = false;
+                        return;
+                    }
+                    mmUpsertAccount(acc.email, password, acc.label);
+                    mmCloseShopModal();
+                    await mmSwitchActiveShop(acc.email);
+                });
+            }
+            m.classList.remove("hidden");
+            m.setAttribute("aria-hidden", "false");
+            if (passInput) passInput.focus();
         }
         function mmOpenAddShopModal() {
             const body = document.getElementById("mmShopModalBody");
@@ -1228,7 +1303,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (unsubDebt) { unsubDebt(); unsubDebt = null; }
             const debtContent = document.getElementById("debtContent");
             if (!debtContent) return;
-            const dref = doc(db, "pos_mobile_debt", channelId);
+            const shopDb = mmGetShopFirestore(channelId);
+            if (!shopDb) return;
+            const dref = doc(shopDb, "pos_mobile_debt", channelId);
             unsubDebt = onSnapshot(dref, function (snap) {
                 applyDebtData(snap.exists() ? snap.data() : null);
             }, function () {
@@ -1973,11 +2050,18 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.classList.add("spinning"); }
             try {
                 const dayKey = getMobileDetailDayKey();
+                const shopDb = mmGetShopFirestore(activeChannelId);
+                if (!shopDb) {
+                    mmApplyShopHubToUi(activeChannelId);
+                    await mmRefreshAllHubs();
+                    if (!opts.silent) showRefreshToast("تێپەڕەوشە نوێ بکە", true);
+                    return;
+                }
                 const snaps = await Promise.all([
-                    getDocFromServer(doc(db, "pos_mobile_dashboard", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_inventory", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_debt", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
+                    getDocFromServer(doc(shopDb, "pos_mobile_dashboard", activeChannelId)),
+                    getDocFromServer(doc(shopDb, "pos_mobile_inventory", activeChannelId)),
+                    getDocFromServer(doc(shopDb, "pos_mobile_debt", activeChannelId)),
+                    getDocFromServer(doc(shopDb, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
                 ]);
                 applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true });
                 applyInventoryData(snaps[1].exists() ? snaps[1].data() : null);
@@ -2026,7 +2110,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const invContent = document.getElementById("inventoryContent");
             if (!invCard || !invContent) return;
 
-            const iref = doc(db, "pos_mobile_inventory", channelId);
+            const shopDb = mmGetShopFirestore(channelId);
+            if (!shopDb) {
+                mmApplyShopHubToUi(channelId);
+                return;
+            }
+            const iref = doc(shopDb, "pos_mobile_inventory", channelId);
             unsubInventory = onSnapshot(iref, (snap) => {
                 applyInventoryData(snap.exists() ? snap.data() : null);
             }, () => {
@@ -2041,7 +2130,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         function bindDetail(channelId) {
             if (unsubDetail) { unsubDetail(); unsubDetail = null; }
             const dayKey = getMobileDetailDayKey();
-            const dref = doc(db, "pos_mobile_daily_detail", channelId, "days", dayKey);
+            const shopDb = mmGetShopFirestore(channelId);
+            if (!shopDb) return;
+            const dref = doc(shopDb, "pos_mobile_daily_detail", channelId, "days", dayKey);
             const detailCard = document.getElementById("detailCard");
             const detailContent = document.getElementById("detailContent");
             const detailMeta = document.getElementById("detailMeta");
@@ -2056,7 +2147,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         function bindDashboard(channelId) {
             if (unsub) unsub();
-            const ref = doc(db, "pos_mobile_dashboard", channelId);
+            const shopDb = mmGetShopFirestore(channelId);
+            if (!shopDb) {
+                mmApplyShopHubToUi(channelId);
+                return;
+            }
+            const ref = doc(shopDb, "pos_mobile_dashboard", channelId);
             unsub = onSnapshot(ref, (snap) => {
                 applyDashboardData(snap.exists() ? snap.data() : null);
             }, () => setStatus("هەڵەی Firebase", false));
@@ -2316,6 +2412,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         const appShell = document.getElementById("appShell");
 
         onAuthStateChanged(auth, (user) => {
+            if (mmSwitchingShop && !user) return;
             if (!user || !user.email) {
                 activeChannelId = "";
                 if (appShell) appShell.classList.remove("is-logged-in");
