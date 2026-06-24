@@ -1,7 +1,7 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.0";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.31";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -113,6 +113,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
         function mmApplyHubInv(state, data) {
             if (!state) return;
+            state.invFull = data || null;
             state.inv = data && data.summary ? data.summary : null;
         }
         function mmTeardownHub(email) {
@@ -218,8 +219,13 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const acc = mmAccountByEmail(em);
             if (!acc) return;
             mmSetActiveEmail(em);
+            mmApplyShopHubToUi(em);
             if (auth.currentUser && String(auth.currentUser.email || "").toLowerCase() === em) {
+                activeChannelId = em;
+                mmRebindShopListeners(em);
+                setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
                 mmRenderShopsHub();
+                mmRenderShopSwitcher();
                 return;
             }
             try {
@@ -227,6 +233,21 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             } catch (e) {
                 showRefreshToast("گۆڕینی دووکان سەرنەکەوت", true);
             }
+        }
+        function mmApplyShopHubToUi(email) {
+            const em = mmHubKey(email);
+            const st = mmShopHub[em];
+            if (!st) return;
+            if (st.dash) applyDashboardData(st.dash, { silent: true });
+            else applyDashboardData(null, { silent: true });
+            if (st.invFull) applyInventoryData(st.invFull);
+        }
+        function mmRebindShopListeners(channelId) {
+            bindDashboard(channelId);
+            bindDetail(channelId);
+            bindInventory(channelId);
+            bindDebt(channelId);
+            bindBackups(channelId);
         }
         function mmRenderShopsHub() {
             const grid = document.getElementById("mmShopsGrid");
@@ -778,13 +799,38 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (el) el.innerHTML = '<i class="fas fa-clock"></i> ' + text;
         }
 
+        const POS_TZ = "Asia/Baghdad";
+        const POS_TZ_OFFSET_MIN = 180;
+
+        function shiftMobileDateKey(ymd, deltaDays) {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+            if (!m) return ymd;
+            const y = parseInt(m[1], 10);
+            const mo = parseInt(m[2], 10);
+            const da = parseInt(m[3], 10);
+            const utcMs = Date.UTC(y, mo - 1, da, 12, 0, 0) - (POS_TZ_OFFSET_MIN * 60 * 1000) + (deltaDays * 86400000);
+            return new Date(utcMs).toLocaleDateString("en-CA", { timeZone: POS_TZ });
+        }
+
+        function getPosTimezoneHour(d) {
+            const x = d instanceof Date ? d : new Date(d);
+            if (isNaN(x.getTime())) return 0;
+            return parseInt(x.toLocaleString("en-GB", { timeZone: POS_TZ, hour: "numeric", hour12: false }), 10) || 0;
+        }
+
         function getBusinessDateKey(d) {
-            const x = new Date(d);
+            const x = d instanceof Date ? d : new Date(d);
             if (isNaN(x.getTime())) return "";
-            const y = x.getFullYear();
-            const mo = String(x.getMonth() + 1).padStart(2, "0");
-            const day = String(x.getDate()).padStart(2, "0");
-            return `${y}-${mo}-${day}`;
+            const startHour = Number(mobileAmountMeta.businessDayStartHour);
+            const sh = Number.isFinite(startHour) && startHour >= 0 && startHour <= 23 ? startHour : 0;
+            let dateKey = x.toLocaleDateString("en-CA", { timeZone: POS_TZ });
+            if (getPosTimezoneHour(x) < sh) dateKey = shiftMobileDateKey(dateKey, -1);
+            return dateKey;
+        }
+
+        function getMobileDetailDayKey() {
+            if (mobileAmountMeta.businessDate) return String(mobileAmountMeta.businessDate);
+            return getBusinessDateKey(new Date());
         }
 
         function esc(s) {
@@ -796,7 +842,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
         }
 
-        let mobileAmountMeta = { amountCurrency: "IQD", posDisplayCurrency: "IQD", syncVersion: 3, usdRatePerOne: 0 };
+        let mobileAmountMeta = { amountCurrency: "IQD", posDisplayCurrency: "IQD", syncVersion: 3, usdRatePerOne: 0, businessDate: "", businessDayStartHour: 0 };
         const MM_PRIVACY_HIDDEN = "— · شاردراوە";
 
         function mmPrivacyFromDoc(d) {
@@ -880,7 +926,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 amountCurrency: src.amountCurrency || meta.amountCurrency || "IQD",
                 posDisplayCurrency: src.posDisplayCurrency || meta.posDisplayCurrency || meta.amountCurrency || "IQD",
                 syncVersion: Number(src.syncVersion != null ? src.syncVersion : (meta.v != null ? meta.v : 3)),
-                usdRatePerOne: Number(src.usdRatePerOne || meta.usdRatePerOne || 0)
+                usdRatePerOne: Number(src.usdRatePerOne || meta.usdRatePerOne || 0),
+                businessDate: String(src.businessDate || meta.businessDate || ""),
+                businessDayStartHour: Number(src.businessDayStartHour != null ? src.businessDayStartHour : (meta.businessDayStartHour != null ? meta.businessDayStartHour : 0))
             };
             updateMobileCurrencyHint();
             if (getMobileDisplayCurrency() !== prevCur) {
@@ -1730,14 +1778,19 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             kpiNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             kpiInvoices.textContent = String(Number(d.invoicesCountToday || 0));
             const ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate() : new Date();
+            const ageMs = Date.now() - ts.getTime();
+            const isStale = ageMs > 3 * 60 * 1000;
             const syncTxt = "دوایین نوێکردنەوە: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-            metaEl.innerHTML = '<i class="fas fa-clock"></i> ' + syncTxt;
-            updateHomeSyncText("دوایین sync: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+            metaEl.innerHTML = '<i class="fas fa-clock"></i> ' + syncTxt + (isStale ? ' <span style="color:#fbbf24;font-weight:700">· کۆنە</span>' : '');
+            updateHomeSyncText("دوایین sync: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + (isStale ? " · کۆنە" : ""));
             const hNet = document.getElementById("homeNet");
             const hSales = document.getElementById("homeSales");
             if (hNet) hNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             if (hSales) hSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
-            if (!opts.silent) setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
+            if (!opts.silent) {
+                if (isStale && navigator.onLine) setStatus("داتا کۆنە — لە POS sync بکە", false);
+                else setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
+            }
             mmSnapDashboard = Object.assign({}, d);
         }
 
@@ -1888,7 +1941,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmPrintTodaySummary({
                     shopLabel: mmShopLabel(acc || { email: activeChannelId }),
                     shopEmail: activeChannelId,
-                    dayKey: mmSnapDetailDayKey || getBusinessDateKey(new Date()),
+                    dayKey: mmSnapDetailDayKey || getMobileDetailDayKey(),
                     dashboard: mmSnapDashboard,
                     detail: mmSnapDetail || {},
                     privacy: mmPrivacyFromDoc(Object.assign({}, mmSnapDashboard || {}, mmSnapDetail || {})),
@@ -1919,7 +1972,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             refreshBusy = true;
             if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.classList.add("spinning"); }
             try {
-                const dayKey = getBusinessDateKey(new Date());
+                const dayKey = getMobileDetailDayKey();
                 const snaps = await Promise.all([
                     getDocFromServer(doc(db, "pos_mobile_dashboard", activeChannelId)),
                     getDocFromServer(doc(db, "pos_mobile_inventory", activeChannelId)),
@@ -1987,7 +2040,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         function bindDetail(channelId) {
             if (unsubDetail) { unsubDetail(); unsubDetail = null; }
-            const dayKey = getBusinessDateKey(new Date());
+            const dayKey = getMobileDetailDayKey();
             const dref = doc(db, "pos_mobile_daily_detail", channelId, "days", dayKey);
             const detailCard = document.getElementById("detailCard");
             const detailContent = document.getElementById("detailContent");
