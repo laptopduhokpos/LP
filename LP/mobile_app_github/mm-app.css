@@ -357,6 +357,21 @@
             font-weight: 800; font-size: 0.9rem; cursor: pointer;
             box-shadow: 0 10px 24px rgba(14, 165, 233, 0.35);
         }
+        .mm-ios-banner {
+            position: sticky;
+            top: 0;
+            z-index: 80;
+            padding: 10px 14px;
+            padding-top: calc(10px + env(safe-area-inset-top, 0px));
+            background: linear-gradient(135deg, #7c3aed, #2563eb);
+            color: #fff;
+            font-size: 0.76rem;
+            line-height: 1.5;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,.2);
+        }
+        .mm-ios-banner.hidden { display: none !important; }
+        .mm-ios-banner p { margin: 0; }
         .mm-install-bar {
             position: fixed;
             left: 50%;

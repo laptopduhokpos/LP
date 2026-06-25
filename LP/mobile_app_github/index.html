@@ -12,13 +12,14 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Laptop Duhok POS — MOBILE APP v2.16.38</title>
-    <script>window.MM_APP_VERSION = "2.16.38";</script>
-    <link rel="manifest" href="manifest.json?v=2.16.38" />
+    <title>Laptop Duhok POS — MOBILE APP v2.16.39</title>
+    <script>window.MM_APP_VERSION = "2.16.39";</script>
+    <link rel="manifest" href="manifest.json?v=2.16.39" />
     <link rel="icon" href="assets/icons/favicon-32.png" type="image/png" sizes="32x32">
     <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" sizes="180x180">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <link rel="stylesheet" href="mm-app.css?v=2.16.38" />
+    <link rel="stylesheet" href="mm-app.css?v=2.16.39" />
+    <script src="assets/vendor/mm-ios-boot.js?v=2.16.39"></script>
 
 </head>
 <body>
@@ -27,6 +28,9 @@
         if (savedTheme === 'light') document.documentElement.setAttribute('data-theme', 'light');
     </script>
     <div class="app-shell" id="appShell">
+        <div id="mmIosBanner" class="mm-ios-banner hidden" role="alert">
+            <p><i class="fab fa-apple"></i> <strong>iPhone:</strong> تەنها لە <strong>Safari</strong> بیکەرەوە → Share <i class="fas fa-arrow-up-from-bracket"></i> → <strong>Add to Home Screen</strong></p>
+        </div>
         <header class="app-topbar">
             <div class="brand-block">
                 <div class="brand-logo-wrap">
@@ -35,7 +39,7 @@
                 </div>
                 <div>
                     <p class="brand-title">Laptop Duhok POS</p>
-                    <p class="brand-sub">MOBILE APP <span class="ver-badge" dir="ltr">v2.16.38</span></p>
+                    <p class="brand-sub">MOBILE APP <span class="ver-badge" dir="ltr">v2.16.39</span></p>
                 </div>
             </div>
             <div class="topbar-actions">
@@ -71,10 +75,11 @@
                     <h3><i class="fas fa-mobile-screen-button"></i> دامەزراندن وەک ئەپ</h3>
                     <p id="installHintAuth">ئەپ لە سەر شاشەی مۆبایل دابمەزرێنە — وەک Android / iPhone.</p>
                     <button type="button" id="installBtnAuth" class="btn-install hidden"><i class="fas fa-download"></i> دامەزراندن (Android)</button>
-                    <ol id="installStepsIosAuth" class="hidden">
-                        <li>Safari بکەرەوە (iPhone)</li>
-                        <li>Share <i class="fas fa-share-from-square"></i> → <strong>Add to Home Screen</strong></li>
-                        <li>«Add» بگرە — ئایکۆن لە سەر شاشە دەردەکەوێت</li>
+                    <ol id="installStepsIosAuth" class="">
+                        <li><strong>Safari</strong> بکەرەوە (نە Chrome لە iPhone)</li>
+                        <li>ئەم لینکە بکەرەوە:<br><code dir="ltr" style="font-size:0.7rem;word-break:break-all;">laptopduhokpos.github.io/LP/mobile_app_github/</code></li>
+                        <li>Share <i class="fas fa-arrow-up-from-bracket"></i> → <strong>Add to Home Screen</strong> → Add</li>
+                        <li>ئایکۆن لە سەر شاشە → بیکەرەوە و چوونەژوورەوە بکە</li>
                     </ol>
                     <ol id="installStepsAndroidAuth" class="hidden">
                         <li>Chrome / Edge لە Android</li>
@@ -425,7 +430,7 @@
         };
         window.MM_SYNC_BACKEND = "supabase";
     </script>
-    <script type="module" src="mm-app.js?v=2.16.38"></script>
+    <script type="module" src="mm-app.js?v=2.16.39"></script>
 
 </body>
 </html>

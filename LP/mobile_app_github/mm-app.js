@@ -1,5 +1,5 @@
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.38";
-        import * as mmSb from "./mm-supabase-sync.js?v=2.16.38";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.39";
+        import * as mmSb from "./mm-supabase-sync.js?v=2.16.39";
 
         const MM_HUB_CACHE_KEY = "mm_hub_cache_v2";
         const MM_DATA_CACHE_KEY = "mm_data_cache_v3";
@@ -14,7 +14,7 @@
         } catch (sdkErr) {
             const m = document.getElementById("authMsg");
             if (m) {
-                m.innerHTML = "نەتوانرا پەیوەندی Supabase باربکرێت.<br><small>Chrome/Safari بەکاربهێنە · WiFi/4G بپشکنە · دووبارە refresh بکە.</small>";
+                m.innerHTML = "نەتوانرا Supabase باربکرێت.<br><small>iPhone: Safari بەکاربهێنە · ئەپەکە بسڕەوە و دووبارە Add to Home Screen بکە.</small>";
             }
             throw sdkErr;
         }
@@ -2307,14 +2307,29 @@
             }
         }
 
+        function mmIsIosDevice() {
+            if (window.__MM_IS_IOS) return true;
+            return /iPad|iPhone|iPod/.test(navigator.userAgent || "") ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        }
+
         function mmRefreshInstallBar() {
             const bar = document.getElementById("mmInstallBar");
+            const iosBanner = document.getElementById("mmIosBanner");
+            if (iosBanner) {
+                if (mmIsIosDevice() && !isStandalone) iosBanner.classList.remove("hidden");
+                else iosBanner.classList.add("hidden");
+            }
             if (!bar) return;
             if (isStandalone || !isMobileUa) {
                 bar.classList.add("hidden");
                 return;
             }
             bar.classList.remove("hidden");
+            const txt = bar.querySelector(".mm-install-bar-text");
+            if (txt && mmIsIosDevice()) {
+                txt.innerHTML = '<i class="fab fa-apple"></i> iPhone: Add to Home Screen';
+            }
         }
 
         function setupInstallUi() {
@@ -2337,6 +2352,7 @@
             if (isIos) {
                 if (iosAuth) iosAuth.classList.remove("hidden");
                 if (androidAuth) androidAuth.classList.add("hidden");
+                if (btnAuth) btnAuth.classList.add("hidden");
             } else {
                 if (androidAuth) androidAuth.classList.remove("hidden");
                 if (iosAuth) iosAuth.classList.add("hidden");
@@ -2408,6 +2424,7 @@
         });
 
         function mmRegisterServiceWorker() {
+            if (mmIsIosDevice()) return;
             if (!("serviceWorker" in navigator)) return;
             var ver = String(window.MM_APP_VERSION || "1");
             var swUrl = "./sw.js?v=" + encodeURIComponent(ver);

@@ -17,7 +17,25 @@ let sdkLoadPromise = null;
 async function mmSbLoadSdk() {
     if (createClientFn) return createClientFn;
     if (sdkLoadPromise) return sdkLoadPromise;
+
     sdkLoadPromise = (async function () {
+        if (window.supabase && typeof window.supabase.createClient === "function") {
+            createClientFn = function (url, key, opts) {
+                return window.supabase.createClient(url, key, opts);
+            };
+            return createClientFn;
+        }
+        if (typeof window.mmSupabaseUmdReady === "function") {
+            try {
+                await window.mmSupabaseUmdReady();
+                if (window.supabase && typeof window.supabase.createClient === "function") {
+                    createClientFn = function (url, key, opts) {
+                        return window.supabase.createClient(url, key, opts);
+                    };
+                    return createClientFn;
+                }
+            } catch (e) { /* fall through to ESM */ }
+        }
         let lastErr = null;
         for (let i = 0; i < SDK_URLS.length; i++) {
             try {
