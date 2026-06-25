@@ -3,7 +3,7 @@
   "name": "Laptop Duhok — بەڕێوەبەری موبایل",
   "short_name": "LD Manager",
   "description": "داشبۆرد · کۆگە · جەرد · قەرز — sync لە POS",
-  "start_url": "./index.html",
+  "start_url": "./index.html?v=2.16.38",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],

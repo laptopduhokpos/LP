@@ -1,5 +1,5 @@
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.37";
-        import * as mmSb from "./mm-supabase-sync.js?v=2.16.37";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.38";
+        import * as mmSb from "./mm-supabase-sync.js?v=2.16.38";
 
         const MM_HUB_CACHE_KEY = "mm_hub_cache_v2";
         const MM_DATA_CACHE_KEY = "mm_data_cache_v3";
@@ -8,7 +8,25 @@
             if (m) m.textContent = "Supabase config نییە.";
             throw new Error("Missing POS_SUPABASE_MOBILE");
         }
-        mmSb.mmSbInit(window.POS_SUPABASE_MOBILE);
+        try {
+            await mmSb.mmSbEnsureReady();
+            await mmSb.mmSbInit(window.POS_SUPABASE_MOBILE);
+        } catch (sdkErr) {
+            const m = document.getElementById("authMsg");
+            if (m) {
+                m.innerHTML = "نەتوانرا پەیوەندی Supabase باربکرێت.<br><small>Chrome/Safari بەکاربهێنە · WiFi/4G بپشکنە · دووبارە refresh بکە.</small>";
+            }
+            throw sdkErr;
+        }
+
+        (function mmWarnInAppBrowser() {
+            const ua = String(navigator.userAgent || "");
+            if (!/FBAN|FBAV|Instagram|Line\/|Twitter|Snapchat/i.test(ua)) return;
+            const w = document.createElement("div");
+            w.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99998;background:#dc2626;color:#fff;padding:12px 14px;font-size:0.8rem;line-height:1.5;text-align:center;";
+            w.innerHTML = "⚠️ لە <strong>Chrome</strong> (Android) یان <strong>Safari</strong> (iPhone) بیکەرەوە — وێبگەڕی ناو ئەپ کار ناکات.";
+            document.body.prepend(w);
+        })();
 
         if (location.pathname.indexOf("/github_pages_LP/") >= 0) {
             const warn = document.createElement("div");

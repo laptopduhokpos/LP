@@ -1,14 +1,43 @@
 /**
- * Mobile Manager — Supabase read/sync (realtime + REST polling + retry).
- * Works globally: polling fallback when WebSocket/realtime is slow or blocked.
+ * Mobile Manager — Supabase (CDN fallback for phones worldwide).
  */
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-
 const MM_POLL_MS = 12000;
 const MM_FETCH_RETRIES = 3;
+const SDK_URLS = [
+    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/+esm",
+    "https://esm.sh/@supabase/supabase-js@2.49.1",
+    "https://unpkg.com/@supabase/supabase-js@2.49.1/dist/module/index.js"
+];
 
+let createClientFn = null;
 let sb = null;
 let sbCfg = null;
+let sdkLoadPromise = null;
+
+async function mmSbLoadSdk() {
+    if (createClientFn) return createClientFn;
+    if (sdkLoadPromise) return sdkLoadPromise;
+    sdkLoadPromise = (async function () {
+        let lastErr = null;
+        for (let i = 0; i < SDK_URLS.length; i++) {
+            try {
+                const mod = await import(/* @vite-ignore */ SDK_URLS[i]);
+                if (mod && typeof mod.createClient === "function") {
+                    createClientFn = mod.createClient;
+                    return createClientFn;
+                }
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+        throw lastErr || new Error("supabase_sdk_load_failed");
+    })();
+    return sdkLoadPromise;
+}
+
+export async function mmSbEnsureReady() {
+    return mmSbLoadSdk();
+}
 
 export function mmSbEnabled() {
     const backend = String(window.MM_SYNC_BACKEND || "supabase").toLowerCase();
@@ -17,11 +46,12 @@ export function mmSbEnabled() {
     return !!(c.enabled && c.url && c.anonKey);
 }
 
-export function mmSbInit(cfg) {
+export async function mmSbInit(cfg) {
+    await mmSbLoadSdk();
     sbCfg = cfg || window.POS_SUPABASE_MOBILE || {};
     if (!sbCfg.url || !sbCfg.anonKey) return null;
     if (!sb) {
-        sb = createClient(sbCfg.url, sbCfg.anonKey, {
+        sb = createClientFn(sbCfg.url, sbCfg.anonKey, {
             auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
         });
     }
@@ -29,7 +59,11 @@ export function mmSbInit(cfg) {
 }
 
 export function mmSbClient() {
-    if (!sb && mmSbEnabled()) mmSbInit(window.POS_SUPABASE_MOBILE);
+    if (!sb && mmSbEnabled() && createClientFn && sbCfg && sbCfg.url) {
+        sb = createClientFn(sbCfg.url, sbCfg.anonKey, {
+            auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+        });
+    }
     return sb;
 }
 
@@ -63,6 +97,7 @@ async function mmSbQueryWithRetry(run) {
 }
 
 export async function mmSbSignIn(email, password) {
+    await mmSbInit(window.POS_SUPABASE_MOBILE);
     const client = mmSbClient();
     if (!client) throw new Error("supabase_not_configured");
     const em = String(email || "").trim().toLowerCase();
@@ -76,6 +111,7 @@ export async function mmSbSignOut() {
 }
 
 export async function mmSbGetSessionEmail() {
+    await mmSbInit(window.POS_SUPABASE_MOBILE);
     const client = mmSbClient();
     if (!client) return "";
     const { data } = await client.auth.getSession();
@@ -84,49 +120,61 @@ export async function mmSbGetSessionEmail() {
 }
 
 function mmSbBindTable(opts) {
-    const client = mmSbClient();
-    if (!client) return function () {};
-    const ch = String(opts.channelId || "").trim().toLowerCase();
-    const table = opts.table;
-    const channelKey = opts.channelKey || "channel_id";
-    const dayKey = opts.dayKey != null ? String(opts.dayKey) : "";
-    const rtName = opts.rtName || ("mm-" + table + "-" + ch);
     let stopped = false;
+    let pollId = null;
+    let teardown = function () {};
 
-    function pull() {
-        if (stopped) return;
-        let q = client.from(table).select("data, updated_at").eq(channelKey, ch);
-        if (opts.dayKey != null) q = q.eq("day_key", dayKey);
-        mmSbQueryWithRetry(function () { return q.maybeSingle(); })
-            .then(function (res) {
-                if (stopped) return;
-                opts.onData(mmSbRowToDoc(res.data));
+    mmSbInit(window.POS_SUPABASE_MOBILE).then(function (client) {
+        if (stopped || !client) return;
+        const ch = String(opts.channelId || "").trim().toLowerCase();
+        const table = opts.table;
+        const channelKey = opts.channelKey || "channel_id";
+        const dayKey = opts.dayKey != null ? String(opts.dayKey) : "";
+        const rtName = opts.rtName || ("mm-" + table + "-" + ch);
+
+        function pull() {
+            if (stopped) return;
+            let q = client.from(table).select("data, updated_at").eq(channelKey, ch);
+            if (opts.dayKey != null) q = q.eq("day_key", dayKey);
+            mmSbQueryWithRetry(function () { return q.maybeSingle(); })
+                .then(function (res) {
+                    if (stopped) return;
+                    opts.onData(mmSbRowToDoc(res.data));
+                })
+                .catch(function (err) {
+                    if (!stopped && opts.onErr) opts.onErr(err);
+                });
+        }
+
+        pull();
+        pollId = setInterval(pull, MM_POLL_MS);
+
+        const rt = client.channel(rtName)
+            .on("postgres_changes", {
+                event: "*",
+                schema: "public",
+                table: table,
+                filter: channelKey + "=eq." + ch
+            }, function (payload) {
+                if (stopped || !payload.new) return;
+                if (opts.dayKey != null && String(payload.new.day_key) !== dayKey) return;
+                opts.onData(mmSbRowToDoc(payload.new));
             })
-            .catch(function (err) {
-                if (!stopped && opts.onErr) opts.onErr(err);
-            });
-    }
+            .subscribe();
 
-    pull();
-    const pollId = setInterval(pull, MM_POLL_MS);
-
-    const rt = client.channel(rtName)
-        .on("postgres_changes", {
-            event: "*",
-            schema: "public",
-            table: table,
-            filter: channelKey + "=eq." + ch
-        }, function (payload) {
-            if (stopped || !payload.new) return;
-            if (opts.dayKey != null && String(payload.new.day_key) !== dayKey) return;
-            opts.onData(mmSbRowToDoc(payload.new));
-        })
-        .subscribe();
+        teardown = function () {
+            stopped = true;
+            if (pollId) clearInterval(pollId);
+            try { client.removeChannel(rt); } catch (e) {}
+        };
+    }).catch(function (err) {
+        if (opts.onErr) opts.onErr(err);
+    });
 
     return function () {
         stopped = true;
-        clearInterval(pollId);
-        try { client.removeChannel(rt); } catch (e) {}
+        if (pollId) clearInterval(pollId);
+        teardown();
     };
 }
 
@@ -174,17 +222,21 @@ export function mmSbBindDetail(channelId, dayKey, onData, onErr) {
 }
 
 export function mmSbOnAuthStateChange(cb) {
-    const client = mmSbClient();
-    if (!client) return function () {};
-    const sub = client.auth.onAuthStateChange(function (_event, session) {
-        cb(session && session.user ? session.user : null);
-    });
-    return function () {
-        try { sub.data.subscription.unsubscribe(); } catch (e) {}
-    };
+    let unsub = function () {};
+    mmSbInit(window.POS_SUPABASE_MOBILE).then(function (client) {
+        if (!client) return;
+        const sub = client.auth.onAuthStateChange(function (_event, session) {
+            cb(session && session.user ? session.user : null);
+        });
+        unsub = function () {
+            try { sub.data.subscription.unsubscribe(); } catch (e) {}
+        };
+    }).catch(function () {});
+    return function () { unsub(); };
 }
 
 export async function mmSbFetchAll(channelId, dayKey) {
+    await mmSbInit(window.POS_SUPABASE_MOBILE);
     const client = mmSbClient();
     if (!client) throw new Error("supabase_not_configured");
     const ch = String(channelId || "").trim().toLowerCase();
