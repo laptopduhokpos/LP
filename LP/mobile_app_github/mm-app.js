@@ -1,22 +1,33 @@
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.39";
-        import * as mmSb from "./mm-supabase-sync.js?v=2.16.39";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.40";
+        import * as mmSb from "./mm-supabase-sync.js?v=2.16.40";
 
         const MM_HUB_CACHE_KEY = "mm_hub_cache_v2";
         const MM_DATA_CACHE_KEY = "mm_data_cache_v3";
-        if (!window.POS_SUPABASE_MOBILE || !window.POS_SUPABASE_MOBILE.url) {
-            const m = document.getElementById("authMsg");
-            if (m) m.textContent = "Supabase config نییە.";
-            throw new Error("Missing POS_SUPABASE_MOBILE");
-        }
-        try {
-            await mmSb.mmSbEnsureReady();
-            await mmSb.mmSbInit(window.POS_SUPABASE_MOBILE);
-        } catch (sdkErr) {
-            const m = document.getElementById("authMsg");
-            if (m) {
-                m.innerHTML = "نەتوانرا Supabase باربکرێت.<br><small>iPhone: Safari بەکاربهێنە · ئەپەکە بسڕەوە و دووبارە Add to Home Screen بکە.</small>";
+
+        let mmSbBootOk = false;
+        const mmSbBootPromise = (async function mmSbBootAsync() {
+            if (!window.POS_SUPABASE_MOBILE || !window.POS_SUPABASE_MOBILE.url) {
+                const m = document.getElementById("authMsg");
+                if (m) m.textContent = "Supabase config نییە.";
+                return false;
             }
-            throw sdkErr;
+            try {
+                await mmSb.mmSbEnsureReady();
+                await mmSb.mmSbInit(window.POS_SUPABASE_MOBILE);
+                mmSbBootOk = true;
+                return true;
+            } catch (sdkErr) {
+                const m = document.getElementById("authMsg");
+                if (m) {
+                    m.innerHTML = "نەتوانرا Supabase باربکرێت — دووبارە refresh بکە.<br><small>iPhone: Safari · WiFi/4G بپشکنە</small>";
+                }
+                return false;
+            }
+        })();
+
+        async function mmAwaitSb() {
+            await mmSbBootPromise;
+            if (!mmSbBootOk) throw new Error("supabase_not_ready");
         }
 
         (function mmWarnInAppBrowser() {
@@ -2202,6 +2213,7 @@
             }
             authMsg.textContent = "چاوەڕێ بکە…";
             try {
+                await mmAwaitSb();
                 const res = await mmSb.mmSbSignIn(email, password);
                 if (res.error) throw res.error;
                 const upsertSb = mmUpsertAccount(email, password, "");
@@ -2211,10 +2223,13 @@
                     authMsg.textContent = "";
                 }
             } catch (e) {
-                const msg = e && e.message ? e.message : "Unknown error";
+                const msg = e && e.message === "supabase_not_ready"
+                    ? "هاوپەیوانی Supabase — چاوەڕێ بکە یان refresh"
+                    : (e && e.message ? e.message : "Unknown error");
                 authMsg.textContent = "چوونەژوورەوە سەرنەکەوت: " + msg;
             }
         }
+        window.mmDoLogin = doLogin;
 
         const themeBtn = document.getElementById("themeToggleBtn");
         const themeIcon = document.getElementById("themeIcon");
@@ -2499,19 +2514,27 @@
         });
 
         (function mmTryAutoLogin() {
-            mmLoadAccounts();
-            if (!mmAccounts.length) return;
-            const target = mmAccountByEmail(mmGetActiveEmail()) || mmAccounts[0];
-            if (!target) return;
-            mmSb.mmSbGetSessionEmail().then(function (cur) {
-                if (cur) {
-                    mmEnterLoggedInUi(cur);
-                    return;
-                }
-                mmSb.mmSbSignIn(target.email, mmDecodeSecret(target.passEnc))
-                    .then(function (res) {
-                        if (res.error) return;
-                        mmEnterLoggedInUi(target.email);
-                    }).catch(function () {});
+            mmSbBootPromise.then(function () {
+                if (!mmSbBootOk) return;
+                mmLoadAccounts();
+                if (!mmAccounts.length) return;
+                const target = mmAccountByEmail(mmGetActiveEmail()) || mmAccounts[0];
+                if (!target) return;
+                mmSb.mmSbGetSessionEmail().then(function (cur) {
+                    if (cur) {
+                        mmEnterLoggedInUi(cur);
+                        return;
+                    }
+                    mmSb.mmSbSignIn(target.email, mmDecodeSecret(target.passEnc))
+                        .then(function (res) {
+                            if (res.error) return;
+                            mmEnterLoggedInUi(target.email);
+                        }).catch(function () {});
+                });
             });
         })();
+
+        window.mmDoLogin = doLogin;
+        window.__mmAppReady = true;
+        const mmBootOverlay = document.getElementById("mmBootOverlay");
+        if (mmBootOverlay) mmBootOverlay.classList.add("hidden");
