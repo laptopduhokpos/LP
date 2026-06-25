@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ku" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="no" />
+    <meta name="apple-mobile-web-app-title" content="POS Backup" />
+    <title>پاشەکەوت — Laptop Duhok POS</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
+    <style>
+        :root {
+            --bg: #0b1220; --surface: #111827; --line: rgba(148,163,184,.2);
+            --text: #f8fafc; --muted: #94a3b8;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: "Segoe UI", Tahoma, "Noto Kufi Arabic", Arial, sans-serif;
+            background: var(--bg); color: var(--text); min-height: 100dvh; padding: 16px;
+            padding-top: calc(16px + env(safe-area-inset-top));
+            padding-bottom: calc(16px + env(safe-area-inset-bottom));
+        }
+        .wrap { max-width: 480px; margin: 0 auto; }
+        h1 { font-size: 1.1rem; margin: 0 0 6px; }
+        .sub { font-size: 0.78rem; color: var(--muted); line-height: 1.5; margin: 0 0 14px; }
+        label { font-size: 0.78rem; color: var(--muted); display: block; margin: 10px 0 4px; }
+        input {
+            width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+            background: rgba(15,23,42,.8); color: var(--text); font-size: 1rem;
+        }
+        .btn {
+            width: 100%; margin-top: 12px; padding: 14px; border: none; border-radius: 14px;
+            background: linear-gradient(135deg, #6366f1, #3b82f6); color: #fff;
+            font-weight: 700; font-size: 0.95rem; cursor: pointer;
+        }
+        .btn.secondary {
+            background: linear-gradient(135deg, #0ea5e9, #6366f1); margin-top: 8px;
+        }
+        .notice {
+            margin: 12px 0; padding: 12px; border-radius: 12px; font-size: 0.76rem; line-height: 1.55;
+            background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.35); color: #86efac;
+        }
+        .notice.warn {
+            background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.4); color: #fcd34d;
+        }
+        .err { color: #fca5a5; font-size: 0.82rem; margin-top: 10px; }
+        .list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+        .row {
+            display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px;
+            border: 1px solid var(--line); background: var(--surface);
+        }
+        .meta { flex: 1; min-width: 0; }
+        .name { font-size: 0.76rem; font-weight: 700; word-break: break-all; }
+        .when { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+        .dl {
+            flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 14px; border-radius: 12px; border: none; text-decoration: none; color: #fff;
+            background: linear-gradient(135deg, #6366f1, #3b82f6); font-weight: 700; font-size: 0.78rem; cursor: pointer;
+        }
+        .dl:disabled { opacity: 0.55; cursor: wait; }
+        .empty { text-align: center; color: var(--muted); padding: 24px 8px; font-size: 0.82rem; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1><i class="fas fa-download" style="color:#a5b4fc"></i> پاشەکەوت (iPhone)</h1>
+        <p class="sub">لە POS: پاشەکەوتکردن (ZIP) · هەمان WiFi · PIN</p>
+        <div id="standaloneWarn" class="notice warn" hidden>
+            <strong>Add to Home:</strong> داونلۆد ڕاستەوخۆ کار ناکات لە iPhone.
+            دوگمەی <strong>«Save to Files»</strong> بگرە (Share) · یان ئەم پەڕەیە لە <strong>Safari</strong> بکەرەوە (Add to Home مەکە).
+        </div>
+        <div class="notice">
+            POS URL = IPـی WiFiـی لاپتۆپ · PIN = 2026 (یان لە POS)
+        </div>
+        <button type="button" class="btn secondary" id="copyUrlBtn" hidden><i class="fas fa-copy"></i> کۆپی URL → Safari</button>
+        <label>POS URL (WiFi)</label>
+        <input type="url" id="posUrl" dir="ltr" placeholder="http://192.168.1.5/pos" autocomplete="off" />
+        <label>PIN</label>
+        <input type="tel" id="pin" dir="ltr" inputmode="numeric" maxlength="8" placeholder="2026" autocomplete="off" />
+        <button type="button" class="btn" id="listBtn"><i class="fas fa-list"></i> لیستی پاشەکەوت</button>
+        <div id="msg" class="err" hidden></div>
+        <div id="list" class="list"></div>
+    </div>
+    <script>
+        function esc(s) {
+            return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+        }
+        function mmIsIos() {
+            return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        }
+        function mmIsIosStandalone() {
+            return window.navigator.standalone === true ||
+                (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+        }
+        function guessPosBase() {
+            var qs = new URLSearchParams(location.search);
+            var fromQs = qs.get("pos");
+            if (fromQs) return fromQs.replace(/\/$/, "");
+            if (/\.github\.io$/i.test(location.hostname || "")) return "";
+            try {
+                var p = location.pathname || "";
+                var idx = p.toLowerCase().indexOf("/public/mobile_manager");
+                if (idx >= 0) return (location.origin + p.substring(0, idx)).replace(/\/$/, "");
+            } catch (e) {}
+            return (location.origin + "/pos").replace(/\/$/, "");
+        }
+        function formatBytes(n) {
+            n = Number(n) || 0;
+            if (n < 1024) return n + " B";
+            if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+            return (n / 1048576).toFixed(1) + " MB";
+        }
+        function showErr(t) {
+            var el = document.getElementById("msg");
+            if (!el) return;
+            if (!t) { el.hidden = true; el.textContent = ""; return; }
+            el.hidden = false;
+            el.textContent = t;
+        }
+        function mmBackupFetchList(posBase, pin) {
+            var fd = new FormData();
+            fd.append("action", "mobile_list_backups");
+            fd.append("pin", pin);
+            return fetch(posBase + "/", { method: "POST", body: fd, credentials: "omit" });
+        }
+        function mmBackupFetchDownload(posBase, pin, name) {
+            var fd = new FormData();
+            fd.append("action", "mobile_download_backup");
+            fd.append("pin", pin);
+            fd.append("name", name);
+            return fetch(posBase + "/", { method: "POST", body: fd, credentials: "omit" });
+        }
+        function dlBtnLabel() {
+            return mmIsIosStandalone() ? '<i class="fas fa-share-square"></i> Save' : '<i class="fas fa-download"></i> داونلۆد';
+        }
+        function mmDownloadBackupFile(posBase, pin, fileName, btn) {
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            }
+            function resetBtn() {
+                if (!btn) return;
+                btn.disabled = false;
+                btn.innerHTML = dlBtnLabel();
+            }
+            mmBackupFetchDownload(posBase, pin, fileName)
+                .then(function (res) {
+                    if (!res.ok) throw new Error("HTTP " + res.status);
+                    return res.blob();
+                })
+                .then(function (blob) {
+                    var file = new File([blob], fileName, { type: blob.type || "application/zip" });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        return navigator.share({ files: [file], title: fileName });
+                    }
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement("a");
+                    a.href = url;
+                    a.download = fileName;
+                    a.click();
+                    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+                })
+                .then(function () { resetBtn(); })
+                .catch(function (err) {
+                    resetBtn();
+                    if (err && err.name === "AbortError") return;
+                    showErr("داونلۆد سەرنەکەوت: " + String(err.message || err));
+                });
+        }
+        function bindDlButton(btn, posBase, pin, fileName) {
+            btn.addEventListener("click", function (e) {
+                e.preventDefault();
+                mmDownloadBackupFile(posBase, pin, fileName, btn);
+            });
+        }
+        function renderList(items, posBase, pin) {
+            var box = document.getElementById("list");
+            if (!box) return;
+            if (!items || !items.length) {
+                box.innerHTML = '<div class="empty">پاشەکەوت نییە.<br><small>لە POS: بەڕێوەبردنی داتابەیس → پاشەکەوتکردن</small></div>';
+                return;
+            }
+            box.innerHTML = items.map(function (it, idx) {
+                var name = it.name || "backup.zip";
+                var sub = (it.mtime_iso || "") + " · " + formatBytes(it.bytes);
+                return '<div class="row">' +
+                    '<div class="meta"><div class="name">' + esc(name) + '</div><div class="when">' + esc(sub) + '</div></div>' +
+                    '<button type="button" class="dl" data-dl-idx="' + idx + '">' + dlBtnLabel() + '</button>' +
+                    '</div>';
+            }).join("");
+            items.forEach(function (it, idx) {
+                var btn = box.querySelector('[data-dl-idx="' + idx + '"]');
+                if (btn) bindDlButton(btn, posBase, pin, it.name || "backup.zip");
+            });
+        }
+        function loadList() {
+            var posEl = document.getElementById("posUrl");
+            var pinEl = document.getElementById("pin");
+            var posBase = (posEl && posEl.value ? posEl.value : guessPosBase()).trim().replace(/\/$/, "");
+            var pin = (pinEl && pinEl.value ? pinEl.value : "").replace(/\D/g, "");
+            showErr("");
+            if (!pin || pin.length < 4) {
+                showErr("PIN بنووسە (2026 یان لە POS)");
+                return;
+            }
+            if (/localhost|127\.0\.0\.1/i.test(posBase)) {
+                showErr("localhost لە iPhone کار ناکات — IPـی WiFi بنووسە");
+                return;
+            }
+            try { localStorage.setItem("mm_pos_url", posBase); localStorage.setItem("mm_backup_pin", pin); } catch (e) {}
+            var box = document.getElementById("list");
+            if (box) box.innerHTML = '<div class="empty"><i class="fas fa-spinner fa-spin"></i></div>';
+            mmBackupFetchList(posBase, pin)
+                .then(function (res) {
+                    return res.json().then(function (data) {
+                        if (!res.ok || data.status !== "success") throw new Error(data.message || ("HTTP " + res.status));
+                        return data;
+                    });
+                })
+                .then(function (data) {
+                    renderList(data.backups || [], posBase, pin);
+                })
+                .catch(function (err) {
+                    var msg = String(err.message || err);
+                    if (/failed to fetch|network|load/i.test(msg)) {
+                        msg = "پەیوەندی بە POS نەکرا — WiFi، IP، XAMPP، Local Network (Settings)";
+                    } else if (/device_blocked|سیکوریتی|TERM|\$99|خانە/i.test(msg)) {
+                        msg = "هەڵە: " + msg + " — ئەگەر هێشتا دەردەکەوێت Apache ڕێستارت بکە.";
+                    }
+                    showErr(msg);
+                    if (box) box.innerHTML = "";
+                });
+        }
+        (function init() {
+            var qs = new URLSearchParams(location.search);
+            var posEl = document.getElementById("posUrl");
+            var pinEl = document.getElementById("pin");
+            var pos = qs.get("pos") || "";
+            var pin = qs.get("pin") || "";
+            if (!pos) { try { pos = localStorage.getItem("mm_pos_url") || ""; } catch (e) {} }
+            if (!pin) { try { pin = localStorage.getItem("mm_backup_pin") || ""; } catch (e) {} }
+            if (pin && qs.get("pin")) {
+                try { localStorage.setItem("mm_backup_pin", pin.replace(/\D/g, "")); } catch (e) {}
+                if (history.replaceState) {
+                    var clean = location.pathname + "?pos=" + encodeURIComponent(pos || guessPosBase());
+                    if (qs.get("auto") === "1") clean += "&auto=1";
+                    history.replaceState(null, "", clean);
+                }
+            }
+            if (!pos) pos = guessPosBase();
+            if (posEl) posEl.value = pos;
+            if (pinEl) pinEl.value = pin;
+            if (mmIsIosStandalone()) {
+                var w = document.getElementById("standaloneWarn");
+                if (w) w.hidden = false;
+                var c = document.getElementById("copyUrlBtn");
+                if (c) {
+                    c.hidden = false;
+                    c.addEventListener("click", function () {
+                        var url = location.href.split("#")[0];
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(url).then(function () {
+                                alert("URL کۆپی کرا — Safari بکەرەوە و Paste بکە");
+                            }).catch(function () { prompt("URL لە Safari:", url); });
+                        } else {
+                            prompt("URL لە Safari paste بکە:", url);
+                        }
+                    });
+                }
+            }
+            document.getElementById("listBtn").addEventListener("click", loadList);
+            if (qs.get("auto") === "1" && pin.length >= 4) loadList();
+        })();
+    </script>
+</body>
+</html>
