@@ -156,6 +156,27 @@ function mmBuildTodayReportHtml(ctx) {
         "</div><script>window.onload=function(){setTimeout(function(){window.focus();window.print();},350);};<\/script></body></html>";
 }
 
+export async function mmShareTodaySummaryIos(ctx) {
+    const html = mmBuildTodayReportHtml(ctx);
+    const name = "pos-report-" + String(ctx.dayKey || "today") + ".html";
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const file = new File([blob], name, { type: "text/html" });
+    if (navigator.share) {
+        try {
+            if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: "پوختەی POS" });
+                return;
+            }
+        } catch (e) {
+            if (e && e.name === "AbortError") return;
+        }
+    }
+    const url = URL.createObjectURL(blob);
+    const opened = window.open(url, "_blank");
+    if (!opened) window.location.href = url;
+    setTimeout(function () { URL.revokeObjectURL(url); }, 120000);
+}
+
 export function mmPrintTodaySummary(ctx) {
     const html = mmBuildTodayReportHtml(ctx);
     let frame = document.getElementById("mmPrintFrame");

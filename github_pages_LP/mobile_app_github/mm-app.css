@@ -31,7 +31,16 @@
             --shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
             --input-bg: #f8fafc;
         }
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: rgba(59, 130, 246, 0.25); }
+        button, .btn-primary, .btn-install, .btn-ghost, .nav-tab, .mm-shop-card,
+        .mm-saved-auth-item, .refresh-btn, .theme-toggle, a.hint-link,
+        .home-tile, .backup-dl-btn, .inv-scan-btn, .btn-pdf-featured, .btn-danger,
+        .mm-install-bar-btn, .inv-date-chip, .debt-sub-tab, .mm-shop-chip {
+            touch-action: manipulation;
+            cursor: pointer;
+            -webkit-touch-callout: none;
+        }
+        input, textarea, select { touch-action: manipulation; font-size: 16px; }
         html {
             height: 100%;
             overflow-x: hidden;
@@ -63,8 +72,10 @@
         .app-panel.hidden { display: none !important; }
         .app-bottom-nav {
             position: fixed;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 0;
+            right: 0;
+            margin-left: auto;
+            margin-right: auto;
             bottom: 0;
             width: 100%;
             max-width: 480px;
@@ -357,12 +368,29 @@
             font-weight: 800; font-size: 0.9rem; cursor: pointer;
             box-shadow: 0 10px 24px rgba(14, 165, 233, 0.35);
         }
+        .mm-ios-banner {
+            position: sticky;
+            top: 0;
+            z-index: 80;
+            padding: 10px 14px;
+            padding-top: calc(10px + env(safe-area-inset-top, 0px));
+            background: linear-gradient(135deg, #7c3aed, #2563eb);
+            color: #fff;
+            font-size: 0.76rem;
+            line-height: 1.5;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,.2);
+        }
+        .mm-ios-banner.hidden { display: none !important; }
+        .mm-ios-banner p { margin: 0; }
         .mm-install-bar {
             position: fixed;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 12px;
+            right: 12px;
+            margin-left: auto;
+            margin-right: auto;
             bottom: calc(var(--mm-nav-h) + 8px);
-            width: calc(100% - 24px);
+            width: auto;
             max-width: 456px;
             z-index: 70;
             padding: 12px 14px;
@@ -390,6 +418,21 @@
             white-space: nowrap;
         }
         .hidden { display: none !important; }
+
+        #mmBootOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 99990;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(11, 18, 32, 0.92);
+            color: #93c5fd;
+            font-size: 0.9rem;
+            font-weight: 700;
+            pointer-events: none;
+        }
+        #mmBootOverlay.hidden { display: none !important; }
 
         .app-topbar {
             display: flex;
@@ -462,18 +505,21 @@
         .refresh-btn.spinning i { animation: mm-spin 0.75s linear infinite; }
         @keyframes mm-spin { to { transform: rotate(360deg); } }
         .ptr-indicator {
-            position: fixed; top: 0; left: 50%; transform: translateX(-50%) translateY(-120%);
+            position: fixed; top: 0; left: 0; right: 0; margin: 0 auto;
+            transform: translateY(-120%);
+            width: max-content;
             z-index: 80; padding: 8px 14px; border-radius: 999px;
             background: rgba(15, 23, 42, 0.92); border: 1px solid var(--line);
             color: #93c5fd; font-size: 0.78rem; font-weight: 700;
             transition: transform 0.2s ease; pointer-events: none;
             max-width: 90%;
         }
-        .ptr-indicator.visible { transform: translateX(-50%) translateY(calc(10px + var(--mm-top-safe))); }
+        .ptr-indicator.visible { transform: translateY(calc(10px + var(--mm-top-safe))); }
         [data-theme="light"] .ptr-indicator { background: rgba(255,255,255,.96); color: #2563eb; }
         .refresh-toast {
-            position: fixed; left: 50%; top: calc(52px + var(--mm-top-safe));
-            transform: translateX(-50%) translateY(-160%);
+            position: fixed; left: 0; right: 0; margin: 0 auto;
+            top: calc(52px + var(--mm-top-safe));
+            transform: translateY(-160%);
             z-index: 70;
             padding: 10px 16px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
             background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(34, 197, 94, 0.35);
@@ -482,7 +528,7 @@
             max-width: calc(100% - 24px); text-align: center;
         }
         .refresh-toast.show {
-            transform: translateX(-50%) translateY(0);
+            transform: translateY(0);
             opacity: 1;
         }
         .refresh-toast.err { background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.35); color: #fca5a5; }
@@ -871,9 +917,20 @@
             background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 211, 153, 0.35);
             font-size: 0.82rem; color: #6ee7b7;
         }
+        .inv-scanner-modal.hidden { display: none !important; }
         .inv-scanner-modal {
             position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.88);
             display: flex; align-items: center; justify-content: center; padding: 16px;
+        }
+        @supports (-webkit-touch-callout: none) {
+            .app-topbar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+            .mm-modal { backdrop-filter: none; -webkit-backdrop-filter: none; }
+            button, .nav-tab, .btn-primary, .btn-install, .mm-shop-card,
+            .home-tile, .backup-dl-btn, .btn-pdf-featured, .btn-danger, .mm-install-bar-btn {
+                -webkit-user-select: none;
+                user-select: none;
+            }
+            input, textarea, select { -webkit-user-select: text; user-select: text; }
         }
         .inv-scanner-panel {
             width: 100%; max-width: 420px; background: var(--surface-2);
