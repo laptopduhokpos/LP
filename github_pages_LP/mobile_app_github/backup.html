@@ -31,7 +31,6 @@
             width: 100%; margin-top: 12px; padding: 14px; border: none; border-radius: 14px;
             background: linear-gradient(135deg, #6366f1, #3b82f6); color: #fff;
             font-weight: 700; font-size: 0.95rem; cursor: pointer;
-            touch-action: manipulation; -webkit-tap-highlight-color: rgba(59,130,246,.25);
         }
         .btn.secondary {
             background: linear-gradient(135deg, #0ea5e9, #6366f1); margin-top: 8px;
@@ -56,7 +55,6 @@
             flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
             padding: 10px 14px; border-radius: 12px; border: none; text-decoration: none; color: #fff;
             background: linear-gradient(135deg, #6366f1, #3b82f6); font-weight: 700; font-size: 0.78rem; cursor: pointer;
-            touch-action: manipulation;
         }
         .dl:disabled { opacity: 0.55; cursor: wait; }
         .empty { text-align: center; color: var(--muted); padding: 24px 8px; font-size: 0.82rem; }
@@ -135,55 +133,6 @@
         function dlBtnLabel() {
             return mmIsIosStandalone() ? '<i class="fas fa-share-square"></i> Save' : '<i class="fas fa-download"></i> داونلۆد';
         }
-        var mmIosPrefetch = new WeakMap();
-
-        function mmBindTap(el, handler) {
-            if (!el || typeof handler !== "function") return;
-            var last = 0;
-            function run(e) {
-                var now = Date.now();
-                if (now - last < 380) return;
-                last = now;
-                handler(e);
-            }
-            if (mmIsIos()) {
-                var st = { moved: false, x: 0, y: 0 };
-                el.addEventListener("touchstart", function (e) {
-                    st.moved = false;
-                    var t = e.touches && e.touches[0];
-                    if (t) { st.x = t.clientX; st.y = t.clientY; }
-                }, { passive: true });
-                el.addEventListener("touchmove", function (e) {
-                    var t = e.touches && e.touches[0];
-                    if (!t) return;
-                    if (Math.abs(t.clientX - st.x) > 12 || Math.abs(t.clientY - st.y) > 12) st.moved = true;
-                }, { passive: true });
-                el.addEventListener("touchend", function (e) {
-                    if (st.moved) return;
-                    e.preventDefault();
-                    run(e);
-                }, { passive: false });
-                return;
-            }
-            el.addEventListener("click", run);
-        }
-
-        function mmIosShareBlob(blob, fileName) {
-            var file = new File([blob], fileName, { type: blob.type || "application/zip" });
-            if (navigator.share) {
-                try {
-                    if (!navigator.canShare || navigator.canShare({ files: [file] })) {
-                        return navigator.share({ files: [file], title: fileName });
-                    }
-                } catch (e) {}
-            }
-            var url = URL.createObjectURL(blob);
-            var opened = window.open(url, "_blank");
-            if (!opened) window.location.href = url;
-            setTimeout(function () { URL.revokeObjectURL(url); }, 120000);
-            return Promise.resolve();
-        }
-
         function mmDownloadBackupFile(posBase, pin, fileName, btn) {
             if (btn) {
                 btn.disabled = true;
@@ -194,17 +143,16 @@
                 btn.disabled = false;
                 btn.innerHTML = dlBtnLabel();
             }
-            var cached = btn && mmIosPrefetch.get(btn);
-            var blobPromise = (cached && cached.name === fileName)
-                ? cached.promise
-                : mmBackupFetchDownload(posBase, pin, fileName).then(function (res) {
+            mmBackupFetchDownload(posBase, pin, fileName)
+                .then(function (res) {
                     if (!res.ok) throw new Error("HTTP " + res.status);
                     return res.blob();
-                });
-            if (btn) mmIosPrefetch.delete(btn);
-            blobPromise
+                })
                 .then(function (blob) {
-                    if (mmIsIos()) return mmIosShareBlob(blob, fileName);
+                    var file = new File([blob], fileName, { type: blob.type || "application/zip" });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        return navigator.share({ files: [file], title: fileName });
+                    }
                     var url = URL.createObjectURL(blob);
                     var a = document.createElement("a");
                     a.href = url;
@@ -220,18 +168,7 @@
                 });
         }
         function bindDlButton(btn, posBase, pin, fileName) {
-            if (mmIsIos()) {
-                btn.addEventListener("touchstart", function () {
-                    mmIosPrefetch.set(btn, {
-                        name: fileName,
-                        promise: mmBackupFetchDownload(posBase, pin, fileName).then(function (res) {
-                            if (!res.ok) throw new Error("HTTP " + res.status);
-                            return res.blob();
-                        })
-                    });
-                }, { passive: true });
-            }
-            mmBindTap(btn, function (e) {
+            btn.addEventListener("click", function (e) {
                 e.preventDefault();
                 mmDownloadBackupFile(posBase, pin, fileName, btn);
             });
@@ -319,7 +256,7 @@
                 var c = document.getElementById("copyUrlBtn");
                 if (c) {
                     c.hidden = false;
-                    mmBindTap(c, function () {
+                    c.addEventListener("click", function () {
                         var url = location.href.split("#")[0];
                         if (navigator.clipboard && navigator.clipboard.writeText) {
                             navigator.clipboard.writeText(url).then(function () {
@@ -331,7 +268,7 @@
                     });
                 }
             }
-            mmBindTap(document.getElementById("listBtn"), loadList);
+            document.getElementById("listBtn").addEventListener("click", loadList);
             if (qs.get("auto") === "1" && pin.length >= 4) loadList();
         })();
     </script>
