@@ -10,7 +10,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             getDoc,
             getDocFromServer
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.17.1";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.55";
         import {
             mmSnapSave,
             mmSnapSaveDebounced,
@@ -18,7 +18,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapLoadBundle,
             mmSnapLoadHubBundle,
             mmSnapDetailType
-        } from "./mm-snapshot-store.js?v=2.17.1";
+        } from "./mm-snapshot-store.js?v=2.16.55";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
