@@ -1,7 +1,24 @@
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, getDocFromServer } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.0";
+        import {
+            initializeFirestore,
+            persistentLocalCache,
+            persistentMultipleTabManager,
+            getFirestore,
+            doc,
+            onSnapshot,
+            getDoc,
+            getDocFromServer
+        } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.17.1";
+        import {
+            mmSnapSave,
+            mmSnapSaveDebounced,
+            mmSnapLoad,
+            mmSnapLoadBundle,
+            mmSnapLoadHubBundle,
+            mmSnapDetailType
+        } from "./mm-snapshot-store.js?v=2.17.1";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -12,12 +29,33 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        const db = getFirestore(app);
+        let db;
+        try {
+            db = initializeFirestore(app, {
+                localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+            });
+        } catch (e) {
+            db = getFirestore(app);
+        }
 
-        const MM_MAX_SHOPS = 6;
+        function mmInitFirestore(fbApp) {
+            try {
+                return initializeFirestore(fbApp, {
+                    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+                });
+            } catch (err) {
+                return getFirestore(fbApp);
+            }
+        }
+
+        let mmLastCacheSavedAt = null;
+        let mmHasLocalCache = false;
+        let mmLiveConnected = true;
+
+        const MM_MAX_SHOPS = 2;
         const MM_ACCOUNTS_KEY = "mm_saved_accounts_v1";
         const MM_ACTIVE_ACCOUNT_KEY = "mm_active_account";
-        const MM_SHOP_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4"];
+        const MM_SHOP_COLORS = ["#3b82f6", "#8b5cf6"];
         let mmAccounts = [];
         const mmShopHub = {};
         let mmHubBooting = false;
@@ -110,10 +148,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (rate >= 10000) rate = rate / 100;
             state.usdRate = rate > 0 ? rate : 0;
             state.status = "ok";
+            if (state.email) mmSnapSaveDebounced(state.email, "dashboard", data);
         }
         function mmApplyHubInv(state, data) {
             if (!state) return;
             state.inv = data && data.summary ? data.summary : null;
+            if (state.email && data) mmSnapSaveDebounced(state.email, "inventory", data);
         }
         function mmTeardownHub(email) {
             const key = mmHubKey(email);
@@ -130,18 +170,32 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!acc || !acc.email) return;
             const key = mmHubKey(acc.email);
             const state = mmEnsureHubState(key);
-            state.status = "loading";
+            try {
+                const hubSnap = await mmSnapLoadHubBundle(key);
+                if (hubSnap.dashboard && hubSnap.dashboard.data) {
+                    mmApplyHubDash(state, hubSnap.dashboard.data);
+                }
+                if (hubSnap.inventory && hubSnap.inventory.data) {
+                    mmApplyHubInv(state, hubSnap.inventory.data);
+                }
+                if (hubSnap.latestSavedAt) {
+                    mmLastCacheSavedAt = Math.max(mmLastCacheSavedAt || 0, hubSnap.latestSavedAt);
+                    mmHasLocalCache = true;
+                }
+                if (state.dash || state.inv) mmRenderShopsHub();
+            } catch (e) {}
+            state.status = state.status === "ok" ? "ok" : "loading";
             const appName = "mm-shop-" + acc.id;
             state.appName = appName;
             const fbApp = mmGetSecondaryApp(appName);
             const fbAuth = getAuth(fbApp);
-            const fbDb = getFirestore(fbApp);
+            const fbDb = mmInitFirestore(fbApp);
             try {
                 if (!fbAuth.currentUser || String(fbAuth.currentUser.email || "").toLowerCase() !== key) {
                     await signInWithEmailAndPassword(fbAuth, acc.email, mmDecodeSecret(acc.passEnc));
                 }
             } catch (e) {
-                state.status = "err";
+                state.status = state.dash || state.inv ? "ok" : "err";
                 mmRenderShopsHub();
                 return;
             }
@@ -153,14 +207,17 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmApplyHubDash(state, snap.exists() ? snap.data() : null);
                 mmRenderShopsHub();
                 if (key === mmHubKey(activeChannelId) && snap.exists()) {
-                    applyDashboardData(snap.data(), { silent: true });
+                    applyDashboardData(snap.data(), { silent: snap.metadata.fromCache, fromCache: snap.metadata.fromCache });
                 }
-            }, function () { state.status = "err"; mmRenderShopsHub(); });
+            }, function () {
+                state.status = state.dash || state.inv ? "ok" : "err";
+                mmRenderShopsHub();
+            });
             state.unsubInv = onSnapshot(invRef, function (snap) {
                 mmApplyHubInv(state, snap.exists() ? snap.data() : null);
                 mmRenderShopsHub();
                 if (key === mmHubKey(activeChannelId) && snap.exists()) {
-                    applyInventoryData(snap.data());
+                    applyInventoryData(snap.data(), { silent: snap.metadata.fromCache, fromCache: snap.metadata.fromCache });
                 }
             }, function () {});
         }
@@ -438,23 +495,130 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
         }
         async function mmRefreshAllHubs() {
-            const dayKey = getBusinessDateKey(new Date());
+            if (!navigator.onLine) {
+                await mmHydrateHubsFromLocalStore();
+                return;
+            }
             const jobs = mmAccounts.map(async function (acc) {
                 const key = acc.email;
                 const st = mmShopHub[key];
                 if (!st || !st.appName) return;
                 try {
-                    const fbDb = getFirestore(mmGetSecondaryApp(st.appName));
+                    const fbDb = mmInitFirestore(mmGetSecondaryApp(st.appName));
                     const snaps = await Promise.all([
                         getDocFromServer(doc(fbDb, "pos_mobile_dashboard", key)),
                         getDocFromServer(doc(fbDb, "pos_mobile_inventory", key))
                     ]);
                     mmApplyHubDash(st, snaps[0].exists() ? snaps[0].data() : null);
                     mmApplyHubInv(st, snaps[1].exists() ? snaps[1].data() : null);
-                } catch (e) { st.status = "err"; }
+                } catch (e) { st.status = st.dash || st.inv ? "ok" : "err"; }
             });
             await Promise.all(jobs);
             mmRenderShopsHub();
+        }
+
+        function mmFormatCacheTime(savedAt) {
+            if (!savedAt) return "";
+            return mmFormatShopTime(new Date(savedAt));
+        }
+
+        function mmNoteCacheSavedAt(savedAt) {
+            if (!savedAt) return;
+            mmLastCacheSavedAt = Math.max(mmLastCacheSavedAt || 0, savedAt);
+            mmHasLocalCache = true;
+        }
+
+        function mmUpdateConnectionStatus(opts) {
+            opts = opts || {};
+            const online = navigator.onLine;
+            const fromCache = !!opts.fromCache;
+            if (!online) {
+                mmLiveConnected = false;
+                const ts = mmFormatCacheTime(opts.savedAt || mmLastCacheSavedAt);
+                if (mmHasLocalCache || ts) {
+                    setStatus(ts ? ("ئۆفلاین · " + ts) : "ئۆفلاین · cache", false, "offline-cache");
+                } else {
+                    setStatus("ئۆفلاین", false, "offline");
+                }
+                return;
+            }
+            if (fromCache && !opts.live) {
+                mmLiveConnected = false;
+                const ts = mmFormatCacheTime(opts.savedAt || mmLastCacheSavedAt);
+                setStatus(ts ? ("cache · " + ts) : "cache", true, "cache");
+                return;
+            }
+            mmLiveConnected = true;
+            setStatus("پەیوەست · live", true, "live");
+        }
+
+        async function mmHydrateFromLocalStore(channelId, dayKey) {
+            if (!channelId) return false;
+            try {
+                const bundle = await mmSnapLoadBundle(channelId, dayKey);
+                let any = false;
+                if (bundle.dashboard && bundle.dashboard.data) {
+                    applyDashboardData(bundle.dashboard.data, {
+                        silent: true,
+                        fromCache: true,
+                        savedAt: bundle.dashboard.savedAt
+                    });
+                    any = true;
+                }
+                if (bundle.inventory && bundle.inventory.data) {
+                    applyInventoryData(bundle.inventory.data, {
+                        silent: true,
+                        fromCache: true,
+                        savedAt: bundle.inventory.savedAt
+                    });
+                    any = true;
+                }
+                if (bundle.debt && bundle.debt.data) {
+                    applyDebtData(bundle.debt.data, {
+                        silent: true,
+                        fromCache: true,
+                        savedAt: bundle.debt.savedAt
+                    });
+                    any = true;
+                }
+                if (bundle.detail && bundle.detail.data) {
+                    applyDetailData(bundle.detail.data, dayKey, {
+                        silent: true,
+                        fromCache: true,
+                        savedAt: bundle.detail.savedAt
+                    });
+                    any = true;
+                }
+                if (bundle.latestSavedAt) mmNoteCacheSavedAt(bundle.latestSavedAt);
+                if (any) mmUpdateConnectionStatus({ fromCache: true, savedAt: bundle.latestSavedAt });
+                return any;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function mmHydrateHubsFromLocalStore() {
+            mmLoadAccounts();
+            let any = false;
+            for (let i = 0; i < mmAccounts.length; i++) {
+                const acc = mmAccounts[i];
+                const key = mmHubKey(acc.email);
+                const state = mmEnsureHubState(key);
+                try {
+                    const hubSnap = await mmSnapLoadHubBundle(key);
+                    if (hubSnap.dashboard && hubSnap.dashboard.data) {
+                        mmApplyHubDash(state, hubSnap.dashboard.data);
+                        any = true;
+                    }
+                    if (hubSnap.inventory && hubSnap.inventory.data) {
+                        mmApplyHubInv(state, hubSnap.inventory.data);
+                        any = true;
+                    }
+                    if (hubSnap.latestSavedAt) mmNoteCacheSavedAt(hubSnap.latestSavedAt);
+                } catch (e) {}
+            }
+            if (any) mmRenderShopsHub();
+            return any;
         }
 
         const authCard = document.getElementById("authCard");
@@ -778,13 +942,117 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (el) el.innerHTML = '<i class="fas fa-clock"></i> ' + text;
         }
 
-        function getBusinessDateKey(d) {
-            const x = new Date(d);
+        const MM_SHOP_TZ = "Asia/Baghdad";
+        let mmShopBusinessDate = "";
+        let mmBusinessDayStartHour = 0;
+        let mmDetailBindDayKey = "";
+
+        function mmFormatShopTime(dateInput, opts) {
+            opts = opts || {};
+            const d = dateInput instanceof Date ? dateInput : new Date(dateInput || Date.now());
+            if (isNaN(d.getTime())) return "";
+            try {
+                return d.toLocaleString("ar-IQ", {
+                    timeZone: MM_SHOP_TZ,
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: opts.withSeconds ? "2-digit" : undefined,
+                    hour12: false
+                });
+            } catch (e) {
+                return d.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit" });
+            }
+        }
+
+        function mmGetPosDateKey(d) {
+            const x = d instanceof Date ? d : new Date(d);
             if (isNaN(x.getTime())) return "";
-            const y = x.getFullYear();
-            const mo = String(x.getMonth() + 1).padStart(2, "0");
-            const day = String(x.getDate()).padStart(2, "0");
-            return `${y}-${mo}-${day}`;
+            try {
+                return x.toLocaleDateString("en-CA", { timeZone: MM_SHOP_TZ });
+            } catch (e) {
+                const y = x.getFullYear();
+                const mo = String(x.getMonth() + 1).padStart(2, "0");
+                const day = String(x.getDate()).padStart(2, "0");
+                return y + "-" + mo + "-" + day;
+            }
+        }
+
+        function mmGetPosTimezoneHour(d) {
+            const x = d instanceof Date ? d : new Date(d);
+            if (isNaN(x.getTime())) return 0;
+            try {
+                return parseInt(x.toLocaleString("en-GB", { timeZone: MM_SHOP_TZ, hour: "numeric", hour12: false }), 10) || 0;
+            } catch (e) {
+                return x.getHours();
+            }
+        }
+
+        function mmShiftDateKey(dateKey, deltaDays) {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ""));
+            if (!m) return String(dateKey || "");
+            const y = parseInt(m[1], 10);
+            const mo = parseInt(m[2], 10);
+            const da = parseInt(m[3], 10);
+            const utcMs = Date.UTC(y, mo - 1, da, 12, 0, 0) + (deltaDays * 86400000);
+            try {
+                return new Date(utcMs).toLocaleDateString("en-CA", { timeZone: MM_SHOP_TZ });
+            } catch (e) {
+                const d2 = new Date(utcMs);
+                return d2.getFullYear() + "-" + String(d2.getMonth() + 1).padStart(2, "0") + "-" + String(d2.getDate()).padStart(2, "0");
+            }
+        }
+
+        function mmLoadCachedBusinessMeta(channelId) {
+            if (!channelId) return;
+            try {
+                const bd = localStorage.getItem("mm_business_date_" + channelId);
+                if (bd && /^\d{4}-\d{2}-\d{2}$/.test(bd)) mmShopBusinessDate = bd;
+                const sh = parseInt(localStorage.getItem("mm_business_start_hour_" + channelId) || "", 10);
+                if (Number.isFinite(sh) && sh >= 0 && sh <= 23) mmBusinessDayStartHour = sh;
+            } catch (e) {}
+        }
+
+        function mmPersistBusinessMeta(channelId) {
+            if (!channelId) return;
+            try {
+                if (mmShopBusinessDate) localStorage.setItem("mm_business_date_" + channelId, mmShopBusinessDate);
+                localStorage.setItem("mm_business_start_hour_" + channelId, String(mmBusinessDayStartHour || 0));
+            } catch (e) {}
+        }
+
+        function mmUpdateShopBusinessMeta(src, opts) {
+            opts = opts || {};
+            if (!src) return false;
+            const meta = src.meta || {};
+            let bd = String(src.businessDate || meta.businessDate || "").slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(bd)) return false;
+            const prev = mmShopBusinessDate;
+            mmShopBusinessDate = bd;
+            const shRaw = src.businessDayStartHour != null ? src.businessDayStartHour : meta.businessDayStartHour;
+            const sh = parseInt(shRaw, 10);
+            if (Number.isFinite(sh) && sh >= 0 && sh <= 23) mmBusinessDayStartHour = sh;
+            if (activeChannelId) mmPersistBusinessMeta(activeChannelId);
+            if (!opts.silent && prev && prev !== bd && activeChannelId) {
+                bindDetail(activeChannelId);
+            }
+            return prev !== bd;
+        }
+
+        function getBusinessDateKey(d) {
+            const x = d instanceof Date ? d : new Date(d);
+            if (isNaN(x.getTime())) return mmShopBusinessDate || "";
+            let dateKey = mmGetPosDateKey(x);
+            if (!dateKey) return mmShopBusinessDate || "";
+            const sh = Number.isFinite(mmBusinessDayStartHour) ? mmBusinessDayStartHour : 0;
+            if (mmGetPosTimezoneHour(x) < sh) dateKey = mmShiftDateKey(dateKey, -1);
+            return dateKey;
+        }
+
+        function getMobileBusinessDayKey() {
+            if (mmShopBusinessDate && /^\d{4}-\d{2}-\d{2}$/.test(mmShopBusinessDate)) {
+                return mmShopBusinessDate;
+            }
+            return getBusinessDateKey(new Date());
         }
 
         function esc(s) {
@@ -922,12 +1190,30 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             return Object.values(grouped);
         }
 
-        function setStatus(text, ok) {
-            const icon = ok ? "fa-circle-check" : "fa-triangle-exclamation";
+        function setStatus(text, ok, mode) {
+            let icon = ok ? "fa-circle-check" : "fa-triangle-exclamation";
+            let bg = ok ? "rgba(34,197,94,0.14)" : "rgba(239,68,68,0.12)";
+            let border = ok ? "rgba(34,197,94,0.28)" : "rgba(239,68,68,0.3)";
+            let color = ok ? "#4ade80" : "#fca5a5";
+            if (mode === "cache") {
+                icon = "fa-cloud";
+                bg = "rgba(59,130,246,0.14)";
+                border = "rgba(59,130,246,0.28)";
+                color = "#93c5fd";
+            } else if (mode === "offline-cache") {
+                icon = "fa-wifi-slash";
+                bg = "rgba(245,158,11,0.14)";
+                border = "rgba(245,158,11,0.28)";
+                color = "#fcd34d";
+            } else if (mode === "offline") {
+                icon = "fa-wifi-slash";
+            } else if (mode === "live") {
+                icon = "fa-circle-check";
+            }
             statusEl.innerHTML = '<i class="fas ' + icon + '"></i> ' + text;
-            statusEl.style.background = ok ? "rgba(34,197,94,0.14)" : "rgba(239,68,68,0.12)";
-            statusEl.style.borderColor = ok ? "rgba(34,197,94,0.28)" : "rgba(239,68,68,0.3)";
-            statusEl.style.color = ok ? "#4ade80" : "#fca5a5";
+            statusEl.style.background = bg;
+            statusEl.style.borderColor = border;
+            statusEl.style.color = color;
         }
 
         function formatQty(v) {
@@ -1119,7 +1405,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             });
         }
 
-        function applyDebtData(data) {
+        function applyDebtData(data, opts) {
+            opts = opts || {};
             const debtContent = document.getElementById("debtContent");
             const debtMeta = document.getElementById("debtMeta");
             const debtCustTotal = document.getElementById("debtCustTotal");
@@ -1128,6 +1415,20 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const debtSupCount = document.getElementById("debtSupCount");
             if (!debtContent) return;
             if (!data) {
+                if (!opts.fromCache && !opts._cacheRetried && activeChannelId) {
+                    mmSnapLoad(activeChannelId, "debt").then(function (snap) {
+                        if (snap && snap.data) {
+                            applyDebtData(snap.data, {
+                                silent: opts.silent,
+                                fromCache: true,
+                                savedAt: snap.savedAt
+                            });
+                        } else {
+                            applyDebtData(null, Object.assign({}, opts, { _cacheRetried: true }));
+                        }
+                    });
+                    return;
+                }
                 debtDocSynced = false;
                 let hint = 'لە POS: ڕێکخستن → Firebase sync → <strong>پەیوەست بکە</strong> (هەمان ئیمەیڵ)<br>' +
                     'پاشان <strong>«ئێستا هاوکات بکە»</strong> بگرە و ≈١٣ چرکە چاوەڕێ بکە.';
@@ -1149,6 +1450,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 return;
             }
             debtDocSynced = true;
+            if (opts.fromCache) mmNoteCacheSavedAt(opts.savedAt);
             const summary = data.summary || {};
             mmSnapDebtSummary = Object.assign({}, summary);
             const meta = data.meta || {};
@@ -1158,7 +1460,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (debtCustCount) debtCustCount.textContent = String(Number(summary.customerDebtorCount || 0)) + " کڕیار";
             if (debtSupCount) debtSupCount.textContent = String(Number(summary.supplierDebtCount || 0)) + " کڕین کۆمپانیا";
             if (debtMeta) {
-                debtMeta.textContent = "کۆی قەرزی کڕیار · کڕین کۆمپانیا" +
+                debtMeta.textContent = (opts.fromCache ? "cache · " : "") + "کۆی قەرزی کڕیار · کڕین کۆمپانیا" +
                     (meta.truncatedCustomers || meta.truncatedCompanies ? " · بەشێک لە لیست" : "");
             }
             debtCustomersCache = Array.isArray(data.customers) ? data.customers.slice() : [];
@@ -1174,6 +1476,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             refreshDebtView();
             bindDebtFilters();
+            if (activeChannelId && !opts.fromCache) {
+                mmSnapSaveDebounced(activeChannelId, "debt", data);
+            }
         }
 
         function bindDebt(channelId) {
@@ -1182,7 +1487,15 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!debtContent) return;
             const dref = doc(db, "pos_mobile_debt", channelId);
             unsubDebt = onSnapshot(dref, function (snap) {
-                applyDebtData(snap.exists() ? snap.data() : null);
+                applyDebtData(snap.exists() ? snap.data() : null, {
+                    silent: snap.metadata.fromCache,
+                    fromCache: snap.metadata.fromCache
+                });
+                if (snap.metadata.fromCache) {
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                } else if (snap.exists()) {
+                    mmUpdateConnectionStatus({ live: true });
+                }
             }, function () {
                 debtContent.innerHTML = '<div class="detail-empty" style="color:#fca5a5;">نەتوانرا قەرز بخوێنرێتەوە — Firestore Rules.<br><br>' +
                     '<strong>چارەسەر:</strong> Firebase Console → Firestore → Rules<br>' +
@@ -1193,7 +1506,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         function getInvStocktakeFilterDate() {
             if (invStDayMode === "all") return "";
-            if (invStDayMode === "today") return getBusinessDateKey(new Date());
+            if (invStDayMode === "today") return getMobileBusinessDayKey();
             if (invStDayMode === "yesterday") {
                 const d = new Date();
                 d.setDate(d.getDate() - 1);
@@ -1201,7 +1514,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             if (invStDayMode === "pick") {
                 const el = document.getElementById("invStDatePick");
-                return (el && el.value) ? el.value : getBusinessDateKey(new Date());
+                return (el && el.value) ? el.value : getMobileBusinessDayKey();
             }
             return "";
         }
@@ -1491,7 +1804,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             invDateFiltersBound = true;
             const row = document.getElementById("invDateRow");
             const pick = document.getElementById("invStDatePick");
-            if (pick) pick.value = getBusinessDateKey(new Date());
+            if (pick) pick.value = getMobileBusinessDayKey();
             if (!row) return;
             row.addEventListener("click", function (e) {
                 const chip = e.target && e.target.closest ? e.target.closest(".inv-date-chip") : null;
@@ -1708,6 +2021,20 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             opts = opts || {};
             setMobileAmountMeta(d);
             if (!d) {
+                if (!opts.fromCache && !opts._cacheRetried && activeChannelId) {
+                    mmSnapLoad(activeChannelId, "dashboard").then(function (snap) {
+                        if (snap && snap.data) {
+                            applyDashboardData(snap.data, {
+                                silent: opts.silent,
+                                fromCache: true,
+                                savedAt: snap.savedAt
+                            });
+                        } else {
+                            applyDashboardData(null, Object.assign({}, opts, { _cacheRetried: true }));
+                        }
+                    });
+                    return;
+                }
                 kpiSales.textContent = formatMobileMoney(0);
                 kpiExpenses.textContent = formatMobileMoney(0);
                 kpiNet.textContent = formatMobileMoney(0);
@@ -1724,24 +2051,41 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 return;
             }
             const priv = mmPrivacyFromDoc(d);
+            mmUpdateShopBusinessMeta(d, { silent: opts.silent || opts.fromCache });
             mmApplyProfitPrivacyUi(priv.hideProfit);
             kpiSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
             kpiExpenses.textContent = formatMoneyIqd(normalizeMobileIqd(d.expensesToday));
             kpiNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             kpiInvoices.textContent = String(Number(d.invoicesCountToday || 0));
-            const ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate() : new Date();
-            const syncTxt = "دوایین نوێکردنەوە: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            let ts;
+            if (opts.fromCache && opts.savedAt) {
+                ts = new Date(opts.savedAt);
+            } else {
+                ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate() : new Date();
+            }
+            const syncPrefix = opts.fromCache && !navigator.onLine ? "cache · " : opts.fromCache ? "cache · " : "";
+            const timeStr = mmFormatShopTime(ts, { withSeconds: true });
+            const syncTxt = syncPrefix + "دوایین نوێکردنەوە: " + timeStr + " (دهۆک)";
             metaEl.innerHTML = '<i class="fas fa-clock"></i> ' + syncTxt;
-            updateHomeSyncText("دوایین sync: " + ts.toLocaleTimeString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+            updateHomeSyncText((opts.fromCache ? "cache · " : "") + "دوایین sync: " + mmFormatShopTime(ts) + " (دهۆک)");
             const hNet = document.getElementById("homeNet");
             const hSales = document.getElementById("homeSales");
             if (hNet) hNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
             if (hSales) hSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
-            if (!opts.silent) setStatus(navigator.onLine ? "پەیوەست" : "ئۆفلاین", navigator.onLine);
+            if (opts.fromCache) {
+                mmNoteCacheSavedAt(opts.savedAt);
+                mmUpdateConnectionStatus({ fromCache: true, savedAt: opts.savedAt });
+            } else if (!opts.silent) {
+                mmUpdateConnectionStatus({ live: true });
+            }
             mmSnapDashboard = Object.assign({}, d);
+            if (activeChannelId && !opts.fromCache) {
+                mmSnapSaveDebounced(activeChannelId, "dashboard", d);
+            }
         }
 
-        function applyInventoryData(data) {
+        function applyInventoryData(data, opts) {
+            opts = opts || {};
             const invContent = document.getElementById("inventoryContent");
             const invMeta = document.getElementById("invMeta");
             const invWhBadge = document.getElementById("invWhBadge");
@@ -1753,6 +2097,20 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const invStocktakeHint = document.getElementById("invStocktakeHint");
             if (!invContent) return;
             if (!data) {
+                if (!opts.fromCache && !opts._cacheRetried && activeChannelId) {
+                    mmSnapLoad(activeChannelId, "inventory").then(function (snap) {
+                        if (snap && snap.data) {
+                            applyInventoryData(snap.data, {
+                                silent: opts.silent,
+                                fromCache: true,
+                                savedAt: snap.savedAt
+                            });
+                        } else {
+                            applyInventoryData(null, Object.assign({}, opts, { _cacheRetried: true }));
+                        }
+                    });
+                    return;
+                }
                 invDocSynced = false;
                 invContent.innerHTML = '<div class="detail-empty">هێشتا داتای کۆگە نییە.<br><br>لە POS: ڕێکخستن → Firebase sync چالاک بکە، پاشان Ctrl+F5.<br>دوای ≈١٢ چرکە یان دوای جەرد/فرۆشتن داتا دێت.<br><br><button type="button" class="btn-ghost" onclick="document.getElementById(\'refreshBtn\')&&document.getElementById(\'refreshBtn\').click()" style="margin-top:8px;width:100%;"><i class="fas fa-arrows-rotate"></i> Refresh</button></div>';
                 if (invMeta) invMeta.textContent = "کۆگە · جەرد";
@@ -1761,6 +2119,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 return;
             }
             invDocSynced = true;
+            if (opts.fromCache) mmNoteCacheSavedAt(opts.savedAt);
+            mmUpdateShopBusinessMeta(data, { silent: true });
             setMobileAmountMeta(data);
             const summary = data.summary || {};
             const meta = data.meta || {};
@@ -1780,7 +2140,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (invWhName) invWhName.textContent = summary.warehouseName || "کۆگە";
             if (invWhBadge) invWhBadge.classList.remove("hidden");
             if (invMeta) {
-                invMeta.textContent = "هەموو ئایتم · " + String(Number(summary.totalTracked || products.length || 0)) +
+                invMeta.textContent = (opts.fromCache ? "cache · " : "") + "هەموو ئایتم · " + String(Number(summary.totalTracked || products.length || 0)) +
                     (meta.truncatedProducts ? " · بەشێک لە لیست" : "");
             }
             invProductsCache = products.slice();
@@ -1792,23 +2152,43 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             bindInventoryFilters();
             bindInvSubTabs();
             if (data.debtSnapshot && (data.debtSnapshot.summary || data.debtSnapshot.companies || data.debtSnapshot.customers)) {
-                applyDebtData(data.debtSnapshot);
+                applyDebtData(data.debtSnapshot, { silent: true, fromCache: opts.fromCache, savedAt: opts.savedAt });
+            }
+            if (activeChannelId && !opts.fromCache) {
+                mmSnapSaveDebounced(activeChannelId, "inventory", data);
             }
         }
 
-        function applyDetailData(data, dayKey) {
+        function applyDetailData(data, dayKey, opts) {
+            opts = opts || {};
             const detailCard = document.getElementById("detailCard");
             const detailContent = document.getElementById("detailContent");
             const detailMeta = document.getElementById("detailMeta");
             if (!detailCard || !detailContent) return;
             detailCard.classList.remove("hidden");
             if (!data) {
+                if (!opts.fromCache && !opts._cacheRetried && activeChannelId && dayKey) {
+                    mmSnapLoad(activeChannelId, mmSnapDetailType(dayKey)).then(function (snap) {
+                        if (snap && snap.data) {
+                            applyDetailData(snap.data, dayKey, {
+                                silent: opts.silent,
+                                fromCache: true,
+                                savedAt: snap.savedAt
+                            });
+                        } else {
+                            applyDetailData(null, dayKey, Object.assign({}, opts, { _cacheRetried: true }));
+                        }
+                    });
+                    return;
+                }
                 detailContent.innerHTML = '<div class="detail-empty">هێشتا وردەکاری نییە. لە لاپتۆپ «ئێستا هاوکات بکە» بکە.</div>';
                 if (detailMeta) detailMeta.textContent = "ڕۆژ: " + dayKey;
                 mmSnapDetail = null;
                 mmSnapDetailDayKey = dayKey;
                 return;
             }
+            if (opts.fromCache) mmNoteCacheSavedAt(opts.savedAt);
+            mmUpdateShopBusinessMeta(data, { silent: true });
             const meta = data.meta || {};
             const priv = mmPrivacyFromDoc(data);
             setMobileAmountMeta(data);
@@ -1817,7 +2197,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const exp = Array.isArray(data.expenses) ? data.expenses : [];
             const purchases = Array.isArray(data.purchases) ? data.purchases : [];
             if (detailMeta) {
-                detailMeta.textContent = "ڕۆژ: " + (meta.businessDate || dayKey) + (meta.truncatedSales ? " · بەشێک لە پسوولەکان" : "");
+                detailMeta.textContent = (opts.fromCache ? "cache · " : "") + "ڕۆژ: " + (meta.businessDate || dayKey) + (meta.truncatedSales ? " · بەشێک لە پسوولەکان" : "");
             }
             let html = "";
             html += '<div class="detail-h purchases"><i class="fas fa-truck"></i> کڕین (' + purchases.length + ")</div>";
@@ -1865,6 +2245,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 meta: Object.assign({}, meta)
             };
             mmSnapDetailDayKey = dayKey;
+            if (activeChannelId && !opts.fromCache) {
+                mmSnapSaveDebounced(activeChannelId, mmSnapDetailType(dayKey), data);
+            }
         }
 
         async function mmExportTodayPdfReport() {
@@ -1888,7 +2271,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmPrintTodaySummary({
                     shopLabel: mmShopLabel(acc || { email: activeChannelId }),
                     shopEmail: activeChannelId,
-                    dayKey: mmSnapDetailDayKey || getBusinessDateKey(new Date()),
+                    dayKey: mmSnapDetailDayKey || getMobileBusinessDayKey(),
                     dashboard: mmSnapDashboard,
                     detail: mmSnapDetail || {},
                     privacy: mmPrivacyFromDoc(Object.assign({}, mmSnapDashboard || {}, mmSnapDetail || {})),
@@ -1911,31 +2294,49 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         async function manualRefreshAll(opts) {
             opts = opts || {};
             if (!activeChannelId || refreshBusy) return;
-            if (!navigator.onLine) {
-                showRefreshToast("ئۆفلاین — ئینتەرنێت پێویستە", true);
-                setStatus("ئۆفلاین", false);
-                return;
-            }
             refreshBusy = true;
             if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.classList.add("spinning"); }
+            const dayKey = getMobileBusinessDayKey();
+            if (!navigator.onLine) {
+                try {
+                    const hydrated = await mmHydrateFromLocalStore(activeChannelId, dayKey);
+                    await mmHydrateHubsFromLocalStore();
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                    if (!opts.silent) {
+                        showRefreshToast(hydrated ? "ئۆفلاین — دوایین داتا ✓" : "ئۆفلاین — هیچ cache نییە", !hydrated);
+                    }
+                } catch (e) {
+                    if (!opts.silent) showRefreshToast("ئۆفلاین — cache سەرنەکەوت", true);
+                } finally {
+                    refreshBusy = false;
+                    if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.classList.remove("spinning"); }
+                }
+                return;
+            }
             try {
-                const dayKey = getBusinessDateKey(new Date());
+                const readDoc = opts.forceServer ? getDocFromServer : getDoc;
                 const snaps = await Promise.all([
-                    getDocFromServer(doc(db, "pos_mobile_dashboard", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_inventory", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_debt", activeChannelId)),
-                    getDocFromServer(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
+                    readDoc(doc(db, "pos_mobile_dashboard", activeChannelId)),
+                    readDoc(doc(db, "pos_mobile_inventory", activeChannelId)),
+                    readDoc(doc(db, "pos_mobile_debt", activeChannelId)),
+                    readDoc(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
                 ]);
                 applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true });
-                applyInventoryData(snaps[1].exists() ? snaps[1].data() : null);
-                applyDebtData(snaps[2].exists() ? snaps[2].data() : null);
-                applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey);
-                await mmRefreshAllHubs();
-                setStatus("پەیوەست", true);
+                applyInventoryData(snaps[1].exists() ? snaps[1].data() : null, { silent: true });
+                applyDebtData(snaps[2].exists() ? snaps[2].data() : null, { silent: true });
+                applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey, { silent: true });
+                if (opts.forceServer) await mmRefreshAllHubs();
+                mmUpdateConnectionStatus({ live: true });
                 if (!opts.silent) showRefreshToast("داتا نوێکرایەوە ✓", false);
             } catch (e) {
-                setStatus("هەڵەی Firebase", false);
-                showRefreshToast("Refresh سەرنەکەوت", true);
+                const hydrated = await mmHydrateFromLocalStore(activeChannelId, dayKey);
+                if (hydrated) {
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                    if (!opts.silent) showRefreshToast("cache — server نەگەیشت", true);
+                } else {
+                    setStatus("هەڵەی Firebase", false);
+                    if (!opts.silent) showRefreshToast("Refresh سەرنەکەوت", true);
+                }
             } finally {
                 refreshBusy = false;
                 if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.classList.remove("spinning"); }
@@ -1959,7 +2360,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             shell.addEventListener("touchend", function () {
                 if (ptrIndicator.classList.contains("visible")) {
                     ptrIndicator.classList.remove("visible");
-                    manualRefreshAll({ silent: false });
+                    manualRefreshAll({ silent: false, forceServer: navigator.onLine });
                 }
                 pulling = false;
             }, { passive: true });
@@ -1975,7 +2376,15 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
             const iref = doc(db, "pos_mobile_inventory", channelId);
             unsubInventory = onSnapshot(iref, (snap) => {
-                applyInventoryData(snap.exists() ? snap.data() : null);
+                applyInventoryData(snap.exists() ? snap.data() : null, {
+                    silent: snap.metadata.fromCache,
+                    fromCache: snap.metadata.fromCache
+                });
+                if (snap.metadata.fromCache) {
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                } else if (snap.exists()) {
+                    mmUpdateConnectionStatus({ live: true });
+                }
             }, () => {
                 invContent.innerHTML = '<div class="detail-empty" style="color:#fca5a5;">نەتوانرا کۆگە بخوێنرێتەوە — Firestore Rules.<br><br>' +
                     '<strong>چارەسەر:</strong> Firebase Console → Firestore → Rules<br>' +
@@ -1987,7 +2396,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         function bindDetail(channelId) {
             if (unsubDetail) { unsubDetail(); unsubDetail = null; }
-            const dayKey = getBusinessDateKey(new Date());
+            const dayKey = getMobileBusinessDayKey();
+            mmDetailBindDayKey = dayKey;
             const dref = doc(db, "pos_mobile_daily_detail", channelId, "days", dayKey);
             const detailCard = document.getElementById("detailCard");
             const detailContent = document.getElementById("detailContent");
@@ -1995,7 +2405,15 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!detailCard || !detailContent) return;
 
             unsubDetail = onSnapshot(dref, (snap) => {
-                applyDetailData(snap.exists() ? snap.data() : null, dayKey);
+                applyDetailData(snap.exists() ? snap.data() : null, dayKey, {
+                    silent: snap.metadata.fromCache,
+                    fromCache: snap.metadata.fromCache
+                });
+                if (snap.metadata.fromCache) {
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                } else if (snap.exists()) {
+                    mmUpdateConnectionStatus({ live: true });
+                }
             }, () => {
                 detailContent.innerHTML = '<div class="detail-empty" style="color:#fca5a5;">نەتوانرا وردەکاری بخوێنرێتەوە (Firestore rules).</div>';
             });
@@ -2005,7 +2423,15 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (unsub) unsub();
             const ref = doc(db, "pos_mobile_dashboard", channelId);
             unsub = onSnapshot(ref, (snap) => {
-                applyDashboardData(snap.exists() ? snap.data() : null);
+                applyDashboardData(snap.exists() ? snap.data() : null, {
+                    silent: snap.metadata.fromCache,
+                    fromCache: snap.metadata.fromCache
+                });
+                if (snap.metadata.fromCache) {
+                    mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
+                } else if (snap.exists()) {
+                    mmUpdateConnectionStatus({ live: true });
+                }
             }, () => setStatus("هەڵەی Firebase", false));
         }
 
@@ -2207,23 +2633,38 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         bindInvDateFilters();
         setupInstallUi();
         setupPullToRefresh();
+        setInterval(function () {
+            if (!activeChannelId) return;
+            const nextDay = getMobileBusinessDayKey();
+            if (mmDetailBindDayKey && nextDay !== mmDetailBindDayKey) {
+                bindDetail(activeChannelId);
+            }
+        }, 60000);
 
         if (refreshBtn) {
-            refreshBtn.addEventListener("click", function () { manualRefreshAll({ silent: false }); });
+            refreshBtn.addEventListener("click", function () { manualRefreshAll({ silent: false, forceServer: true }); });
         }
         const dashRefreshBtn = document.getElementById("dashRefreshBtn");
         if (dashRefreshBtn) {
-            dashRefreshBtn.addEventListener("click", function () { manualRefreshAll({ silent: false }); });
+            dashRefreshBtn.addEventListener("click", function () { manualRefreshAll({ silent: false, forceServer: true }); });
         }
         window.addEventListener("online", function () {
-            if (activeChannelId) setStatus("پەیوەست", true);
+            if (activeChannelId) {
+                mmUpdateConnectionStatus({ live: true });
+                manualRefreshAll({ silent: true });
+            }
         });
         window.addEventListener("offline", function () {
-            if (activeChannelId) setStatus("ئۆفلاین", false);
+            if (activeChannelId) mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
         });
         document.addEventListener("visibilitychange", function () {
             if (document.visibilityState === "visible" && activeChannelId && !refreshBusy) {
-                manualRefreshAll({ silent: true });
+                if (!navigator.onLine) {
+                    mmHydrateFromLocalStore(activeChannelId, getMobileBusinessDayKey());
+                    mmHydrateHubsFromLocalStore();
+                } else {
+                    manualRefreshAll({ silent: true });
+                }
             }
         });
 
@@ -2262,9 +2703,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         const appShell = document.getElementById("appShell");
 
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
             if (!user || !user.email) {
                 activeChannelId = "";
+                mmHasLocalCache = false;
+                mmLastCacheSavedAt = null;
                 if (appShell) appShell.classList.remove("is-logged-in");
                 if (refreshBtn) refreshBtn.classList.add("hidden");
                 if (unsub) { unsub(); unsub = null; }
@@ -2294,6 +2737,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             switchMobileTab(savedTab === "backup" ? "backup" : savedTab === "debt" ? "debt" : savedTab === "inv" ? "inv" : savedTab === "dash" ? "dash" : "home");
             const channelId = user.email.toLowerCase();
             activeChannelId = channelId;
+            mmLoadCachedBusinessMeta(channelId);
+            const dayKey = getMobileBusinessDayKey();
+            await mmHydrateFromLocalStore(channelId, dayKey);
+            await mmHydrateHubsFromLocalStore();
             mmSetActiveEmail(channelId);
             if (passEl && passEl.value) {
                 const upsertLive = mmUpsertAccount(channelId, passEl.value, "");
