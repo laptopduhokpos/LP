@@ -10,7 +10,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             getDoc,
             getDocFromServer
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.16.55";
+        import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.17.40";
         import {
             mmSnapSave,
             mmSnapSaveDebounced,
@@ -18,7 +18,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapLoadBundle,
             mmSnapLoadHubBundle,
             mmSnapDetailType
-        } from "./mm-snapshot-store.js?v=2.16.55";
+        } from "./mm-snapshot-store.js?v=2.17.40";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
@@ -59,6 +59,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let mmAccounts = [];
         const mmShopHub = {};
         let mmHubBooting = false;
+        let mmSwitchingShop = false;
 
         function mmEncodeSecret(s) {
             try { return btoa(unescape(encodeURIComponent(String(s || "")))); } catch (e) { return String(s || ""); }
@@ -274,15 +275,56 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const em = mmHubKey(email);
             const acc = mmAccountByEmail(em);
             if (!acc) return;
-            mmSetActiveEmail(em);
-            if (auth.currentUser && String(auth.currentUser.email || "").toLowerCase() === em) {
+            if (mmSwitchingShop) return;
+
+            const prevActive = mmGetActiveEmail();
+            const cur = auth.currentUser ? String(auth.currentUser.email || "").toLowerCase() : "";
+
+            if (cur === em) {
+                mmSetActiveEmail(em);
                 mmRenderShopsHub();
+                mmRenderShopSwitcher();
                 return;
             }
+
+            const pass = mmDecodeSecret(acc.passEnc);
+            if (!pass) {
+                showRefreshToast("گۆڕینی دووکان سەرنەکەوت — تێپەڕەوشە نەما، دووبارە زیاد بکە", true);
+                return;
+            }
+
+            mmSwitchingShop = true;
             try {
-                await signInWithEmailAndPassword(auth, acc.email, mmDecodeSecret(acc.passEnc));
+                if (cur && cur !== em) {
+                    await signOut(auth);
+                }
+                await signInWithEmailAndPassword(auth, acc.email, pass);
+                mmSetActiveEmail(em);
+                showRefreshToast("دووکان گۆڕدرا ✓", false);
             } catch (e) {
-                showRefreshToast("گۆڕینی دووکان سەرنەکەوت", true);
+                mmSetActiveEmail(prevActive || cur);
+                mmRenderShopsHub();
+                mmRenderShopSwitcher();
+                let hint = "گۆڕینی دووکان سەرنەکەوت";
+                const code = e && e.code ? String(e.code) : "";
+                if (/wrong-password|invalid-credential|invalid-login/i.test(code)) {
+                    hint += " — تێپەڕەوشە نوێ بکە (سڕینەوە + زیادکردن)";
+                }
+                showRefreshToast(hint, true);
+                if (prevActive && prevActive !== em) {
+                    const prevAcc = mmAccountByEmail(prevActive);
+                    if (prevAcc) {
+                        try {
+                            const prevPass = mmDecodeSecret(prevAcc.passEnc);
+                            if (prevPass) {
+                                await signInWithEmailAndPassword(auth, prevAcc.email, prevPass);
+                                mmSetActiveEmail(prevActive);
+                            }
+                        } catch (e2) {}
+                    }
+                }
+            } finally {
+                mmSwitchingShop = false;
             }
         }
         function mmRenderShopsHub() {
@@ -2704,6 +2746,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         const appShell = document.getElementById("appShell");
 
         onAuthStateChanged(auth, async (user) => {
+            if (mmSwitchingShop && !user) return;
             if (!user || !user.email) {
                 activeChannelId = "";
                 mmHasLocalCache = false;
