@@ -19,23 +19,66 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapLoadHubBundle,
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.17.40";
+        import {
+            mmSupabaseDataEnabled,
+            mmFirebaseDataEnabled,
+            mmSupabaseAuthPrimary,
+            mmSbSignIn,
+            mmSbSignOut,
+            mmSbOnAuthStateChanged,
+            mmSbBindRow,
+            mmSbFetchAll,
+            mmSbHubFetchForAccount
+        } from "./mm-supabase.js?v=2.17.86";
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
-        if (!firebaseConfig.apiKey) {
+        const mmUseSbData = mmSupabaseDataEnabled();
+        const mmUseFbData = mmFirebaseDataEnabled();
+        const mmSbAuth = mmSupabaseAuthPrimary();
+
+        async function mmAuthSignIn(email, password) {
+            const em = String(email || "").trim().toLowerCase();
+            const pass = password || "";
+            if (mmSbAuth) {
+                await mmSbSignIn(em, pass);
+            } else if (auth) {
+                await signInWithEmailAndPassword(auth, em, pass);
+            }
+            if (mmUseSbData && !mmSbAuth) {
+                await mmSbSignIn(em, pass).catch(function () {});
+            } else if (mmUseFbData && mmSbAuth && auth) {
+                await signInWithEmailAndPassword(auth, em, pass).catch(function () {});
+            }
+        }
+
+        async function mmAuthSignOut() {
+            if (mmSbAuth) await mmSbSignOut();
+            if (auth && auth.currentUser) await signOut(auth);
+        }
+
+        function mmCurrentAuthEmail() {
+            if (auth && auth.currentUser && auth.currentUser.email) {
+                return String(auth.currentUser.email).toLowerCase();
+            }
+            return activeChannelId || "";
+        }
+        if (!firebaseConfig.apiKey && !mmUseSbData) {
             const m = document.getElementById("authMsg");
             if (m) m.textContent = "Firebase apiKey نییە.";
             throw new Error("Missing Firebase apiKey");
         }
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
+        const app = firebaseConfig.apiKey ? initializeApp(firebaseConfig) : null;
+        const auth = app ? getAuth(app) : null;
         let db;
-        try {
-            db = initializeFirestore(app, {
-                localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-            });
-        } catch (e) {
-            db = getFirestore(app);
+        if (app) {
+            try {
+                db = initializeFirestore(app, {
+                    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+                });
+            } catch (e) {
+                db = getFirestore(app);
+            }
         }
 
         function mmInitFirestore(fbApp) {
@@ -162,6 +205,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!st) return;
             if (st.unsubDash) { try { st.unsubDash(); } catch (e) {} st.unsubDash = null; }
             if (st.unsubInv) { try { st.unsubInv(); } catch (e) {} st.unsubInv = null; }
+            if (st.hubPollId) { clearInterval(st.hubPollId); st.hubPollId = null; }
             delete mmShopHub[key];
         }
         function mmGetSecondaryApp(appName) {
@@ -186,6 +230,33 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (state.dash || state.inv) mmRenderShopsHub();
             } catch (e) {}
             state.status = state.status === "ok" ? "ok" : "loading";
+            if (mmUseSbData && !mmUseFbData) {
+                const pass = mmDecodeSecret(acc.passEnc);
+                async function pollHubSb() {
+                    try {
+                        const pair = await mmSbHubFetchForAccount(acc.email, pass);
+                        mmApplyHubDash(state, pair.dash);
+                        mmApplyHubInv(state, pair.inv);
+                        state.status = "ok";
+                        mmRenderShopsHub();
+                        if (key === mmHubKey(activeChannelId)) {
+                            if (pair.dash) applyDashboardData(pair.dash, { silent: true });
+                            if (pair.inv) applyInventoryData(pair.inv, { silent: true });
+                        }
+                    } catch (e) {
+                        state.status = state.dash || state.inv ? "ok" : "err";
+                        mmRenderShopsHub();
+                    }
+                }
+                if (state.hubPollId) clearInterval(state.hubPollId);
+                await pollHubSb();
+                state.hubPollId = setInterval(pollHubSb, 8000);
+                state.unsubDash = function () {
+                    if (state.hubPollId) { clearInterval(state.hubPollId); state.hubPollId = null; }
+                };
+                state.unsubInv = function () {};
+                return;
+            }
             const appName = "mm-shop-" + acc.id;
             state.appName = appName;
             const fbApp = mmGetSecondaryApp(appName);
@@ -278,7 +349,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (mmSwitchingShop) return;
 
             const prevActive = mmGetActiveEmail();
-            const cur = auth.currentUser ? String(auth.currentUser.email || "").toLowerCase() : "";
+            const cur = mmCurrentAuthEmail();
 
             if (cur === em) {
                 mmSetActiveEmail(em);
@@ -296,9 +367,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSwitchingShop = true;
             try {
                 if (cur && cur !== em) {
-                    await signOut(auth);
+                    await mmAuthSignOut();
                 }
-                await signInWithEmailAndPassword(auth, acc.email, pass);
+                await mmAuthSignIn(acc.email, pass);
                 mmSetActiveEmail(em);
                 showRefreshToast("دووکان گۆڕدرا ✓", false);
             } catch (e) {
@@ -317,7 +388,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                         try {
                             const prevPass = mmDecodeSecret(prevAcc.passEnc);
                             if (prevPass) {
-                                await signInWithEmailAndPassword(auth, prevAcc.email, prevPass);
+                                await mmAuthSignIn(prevAcc.email, prevPass);
                                 mmSetActiveEmail(prevActive);
                             }
                         } catch (e2) {}
@@ -484,7 +555,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     if (wasActive && mmAccounts.length) {
                         mmSwitchActiveShop(mmAccounts[0].email);
                     } else if (!mmAccounts.length) {
-                        signOut(auth);
+                        mmAuthSignOut();
                     }
                     mmOpenManageShopsModal();
                 });
@@ -497,7 +568,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmSaveAccounts();
                 try { localStorage.removeItem(MM_ACTIVE_ACCOUNT_KEY); } catch (e) {}
                 mmCloseShopModal();
-                signOut(auth);
+                mmAuthSignOut();
             });
             m.classList.remove("hidden");
             m.setAttribute("aria-hidden", "false");
@@ -530,7 +601,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmRenderShopSwitcher();
             mmRenderSavedAuthList();
             if (submit) { submit.disabled = false; submit.innerHTML = '<i class="fas fa-check"></i> زیادکردن و جاودێری'; }
-            if (!auth.currentUser) {
+            if (!mmCurrentAuthEmail()) {
                 await mmSwitchActiveShop(email);
             } else {
                 showRefreshToast("دووکان زیادکرا ✓", false);
@@ -544,15 +615,21 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const jobs = mmAccounts.map(async function (acc) {
                 const key = acc.email;
                 const st = mmShopHub[key];
-                if (!st || !st.appName) return;
+                if (!st) return;
                 try {
-                    const fbDb = mmInitFirestore(mmGetSecondaryApp(st.appName));
-                    const snaps = await Promise.all([
-                        getDocFromServer(doc(fbDb, "pos_mobile_dashboard", key)),
-                        getDocFromServer(doc(fbDb, "pos_mobile_inventory", key))
-                    ]);
-                    mmApplyHubDash(st, snaps[0].exists() ? snaps[0].data() : null);
-                    mmApplyHubInv(st, snaps[1].exists() ? snaps[1].data() : null);
+                    if (mmUseSbData && !mmUseFbData) {
+                        const pair = await mmSbHubFetchForAccount(acc.email, mmDecodeSecret(acc.passEnc));
+                        mmApplyHubDash(st, pair.dash);
+                        mmApplyHubInv(st, pair.inv);
+                    } else if (st.appName) {
+                        const fbDb = mmInitFirestore(mmGetSecondaryApp(st.appName));
+                        const snaps = await Promise.all([
+                            getDocFromServer(doc(fbDb, "pos_mobile_dashboard", key)),
+                            getDocFromServer(doc(fbDb, "pos_mobile_inventory", key))
+                        ]);
+                        mmApplyHubDash(st, snaps[0].exists() ? snaps[0].data() : null);
+                        mmApplyHubInv(st, snaps[1].exists() ? snaps[1].data() : null);
+                    }
                 } catch (e) { st.status = st.dash || st.inv ? "ok" : "err"; }
             });
             await Promise.all(jobs);
@@ -1527,6 +1604,13 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (unsubDebt) { unsubDebt(); unsubDebt = null; }
             const debtContent = document.getElementById("debtContent");
             if (!debtContent) return;
+            if (mmUseSbData) {
+                unsubDebt = mmSbBindRow("pos_mobile_debt", channelId, null, function (data, opts) {
+                    applyDebtData(data, opts || {});
+                    if (data && !opts.fromCache) mmUpdateConnectionStatus({ live: true });
+                });
+                return;
+            }
             const dref = doc(db, "pos_mobile_debt", channelId);
             unsubDebt = onSnapshot(dref, function (snap) {
                 applyDebtData(snap.exists() ? snap.data() : null, {
@@ -2103,7 +2187,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (opts.fromCache && opts.savedAt) {
                 ts = new Date(opts.savedAt);
             } else {
-                ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate() : new Date();
+                ts = d.updatedAt && d.updatedAt.toDate ? d.updatedAt.toDate()
+                    : d._updatedAtIso ? new Date(d._updatedAtIso)
+                    : (d.updatedAt && typeof d.updatedAt === "string") ? new Date(d.updatedAt)
+                    : new Date();
             }
             const syncPrefix = opts.fromCache && !navigator.onLine ? "cache · " : opts.fromCache ? "cache · " : "";
             const timeStr = mmFormatShopTime(ts, { withSeconds: true });
@@ -2356,17 +2443,25 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 return;
             }
             try {
-                const readDoc = opts.forceServer ? getDocFromServer : getDoc;
-                const snaps = await Promise.all([
-                    readDoc(doc(db, "pos_mobile_dashboard", activeChannelId)),
-                    readDoc(doc(db, "pos_mobile_inventory", activeChannelId)),
-                    readDoc(doc(db, "pos_mobile_debt", activeChannelId)),
-                    readDoc(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
-                ]);
-                applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true });
-                applyInventoryData(snaps[1].exists() ? snaps[1].data() : null, { silent: true });
-                applyDebtData(snaps[2].exists() ? snaps[2].data() : null, { silent: true });
-                applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey, { silent: true });
+                if (mmUseSbData) {
+                    const data = await mmSbFetchAll(activeChannelId, dayKey);
+                    applyDashboardData(data.dash, { silent: true });
+                    applyInventoryData(data.inv, { silent: true });
+                    applyDebtData(data.debt, { silent: true });
+                    applyDetailData(data.detail, dayKey, { silent: true });
+                } else {
+                    const readDoc = opts.forceServer ? getDocFromServer : getDoc;
+                    const snaps = await Promise.all([
+                        readDoc(doc(db, "pos_mobile_dashboard", activeChannelId)),
+                        readDoc(doc(db, "pos_mobile_inventory", activeChannelId)),
+                        readDoc(doc(db, "pos_mobile_debt", activeChannelId)),
+                        readDoc(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
+                    ]);
+                    applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true });
+                    applyInventoryData(snaps[1].exists() ? snaps[1].data() : null, { silent: true });
+                    applyDebtData(snaps[2].exists() ? snaps[2].data() : null, { silent: true });
+                    applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey, { silent: true });
+                }
                 if (opts.forceServer) await mmRefreshAllHubs();
                 mmUpdateConnectionStatus({ live: true });
                 if (!opts.silent) showRefreshToast("داتا نوێکرایەوە ✓", false);
@@ -2416,6 +2511,14 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const invContent = document.getElementById("inventoryContent");
             if (!invCard || !invContent) return;
 
+            if (mmUseSbData) {
+                unsubInventory = mmSbBindRow("pos_mobile_inventory", channelId, null, function (data, opts) {
+                    applyInventoryData(data, opts || {});
+                    if (data && !opts.fromCache) mmUpdateConnectionStatus({ live: true });
+                });
+                return;
+            }
+
             const iref = doc(db, "pos_mobile_inventory", channelId);
             unsubInventory = onSnapshot(iref, (snap) => {
                 applyInventoryData(snap.exists() ? snap.data() : null, {
@@ -2440,12 +2543,20 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (unsubDetail) { unsubDetail(); unsubDetail = null; }
             const dayKey = getMobileBusinessDayKey();
             mmDetailBindDayKey = dayKey;
-            const dref = doc(db, "pos_mobile_daily_detail", channelId, "days", dayKey);
             const detailCard = document.getElementById("detailCard");
             const detailContent = document.getElementById("detailContent");
             const detailMeta = document.getElementById("detailMeta");
             if (!detailCard || !detailContent) return;
 
+            if (mmUseSbData) {
+                unsubDetail = mmSbBindRow("pos_mobile_daily_detail", channelId, dayKey, function (data, opts) {
+                    applyDetailData(data, dayKey, opts || {});
+                    if (data && !opts.fromCache) mmUpdateConnectionStatus({ live: true });
+                });
+                return;
+            }
+
+            const dref = doc(db, "pos_mobile_daily_detail", channelId, "days", dayKey);
             unsubDetail = onSnapshot(dref, (snap) => {
                 applyDetailData(snap.exists() ? snap.data() : null, dayKey, {
                     silent: snap.metadata.fromCache,
@@ -2463,12 +2574,26 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         function bindDashboard(channelId) {
             if (unsub) unsub();
+            if (mmUseSbData) {
+                unsub = mmSbBindRow("pos_mobile_dashboard", channelId, null, function (data, opts) {
+                    applyDashboardData(data, opts || {});
+                    if (data && !opts.fromCache) mmUpdateConnectionStatus({ live: true });
+                });
+                return;
+            }
             const ref = doc(db, "pos_mobile_dashboard", channelId);
             unsub = onSnapshot(ref, (snap) => {
                 applyDashboardData(snap.exists() ? snap.data() : null, {
                     silent: snap.metadata.fromCache,
                     fromCache: snap.metadata.fromCache
                 });
+                if (snap.metadata.fromCache && navigator.onLine) {
+                    getDocFromServer(ref).then(function (serverSnap) {
+                        if (serverSnap.exists()) {
+                            applyDashboardData(serverSnap.data(), { silent: true, fromCache: false });
+                        }
+                    }).catch(function () {});
+                }
                 if (snap.metadata.fromCache) {
                     mmUpdateConnectionStatus({ fromCache: true, savedAt: mmLastCacheSavedAt });
                 } else if (snap.exists()) {
@@ -2491,7 +2616,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             authMsg.textContent = "چاوەڕێ بکە…";
             try {
-                await signInWithEmailAndPassword(auth, email, password);
+                await mmAuthSignIn(email, password);
                 const upsert = mmUpsertAccount(email, password, "");
                 if (upsert.ok) {
                     mmSetActiveEmail(email);
@@ -2540,9 +2665,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         if (homeGoPdf) homeGoPdf.addEventListener("click", () => mmExportTodayPdfReport());
         const mmPdfTodayBtn = document.getElementById("mmPdfTodayBtn");
         if (mmPdfTodayBtn) mmPdfTodayBtn.addEventListener("click", () => mmExportTodayPdfReport());
-        document.getElementById("logoutBtn").addEventListener("click", () => signOut(auth));
+        document.getElementById("logoutBtn").addEventListener("click", function () { mmAuthSignOut(); });
         const logoutBtnHome = document.getElementById("logoutBtnHome");
-        if (logoutBtnHome) logoutBtnHome.addEventListener("click", () => signOut(auth));
+        if (logoutBtnHome) logoutBtnHome.addEventListener("click", function () { mmAuthSignOut(); });
         const mmAddShopBtn = document.getElementById("mmAddShopBtn");
         const mmManageShopsBtn = document.getElementById("mmManageShopsBtn");
         const mmShopModalClose = document.getElementById("mmShopModalClose");
@@ -2558,7 +2683,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         mmLoadAccounts();
         mmRenderSavedAuthList();
         async function copyUserEmail() {
-            const txt = auth.currentUser && auth.currentUser.email ? auth.currentUser.email : "";
+            const txt = mmCurrentAuthEmail() || (auth && auth.currentUser && auth.currentUser.email ? auth.currentUser.email : "");
             try { await navigator.clipboard.writeText(txt); }
             catch (_) { window.prompt("ئیمێیل کۆپی بکە:", txt); }
         }
@@ -2745,7 +2870,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         const appShell = document.getElementById("appShell");
 
-        onAuthStateChanged(auth, async (user) => {
+        async function mmHandleAuthState(user) {
             if (mmSwitchingShop && !user) return;
             if (!user || !user.email) {
                 activeChannelId = "";
@@ -2796,12 +2921,26 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             bindInventory(channelId);
             bindDebt(channelId);
             bindBackups(channelId);
-        });
+        }
+
+        if (mmSbAuth) {
+            mmSbOnAuthStateChanged(mmHandleAuthState);
+        } else if (auth) {
+            onAuthStateChanged(auth, mmHandleAuthState);
+        }
 
         (function mmTryAutoLogin() {
             mmLoadAccounts();
-            if (!mmAccounts.length || auth.currentUser) return;
+            if (!mmAccounts.length) return;
+            if (mmSbAuth) {
+                if (activeChannelId) return;
+                const target = mmAccountByEmail(mmGetActiveEmail()) || mmAccounts[0];
+                if (!target) return;
+                mmAuthSignIn(target.email, mmDecodeSecret(target.passEnc)).catch(function () {});
+                return;
+            }
+            if (auth && auth.currentUser) return;
             const target = mmAccountByEmail(mmGetActiveEmail()) || mmAccounts[0];
             if (!target) return;
-            signInWithEmailAndPassword(auth, target.email, mmDecodeSecret(target.passEnc)).catch(function () {});
+            mmAuthSignIn(target.email, mmDecodeSecret(target.passEnc)).catch(function () {});
         })();
