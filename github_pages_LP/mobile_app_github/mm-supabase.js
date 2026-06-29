@@ -24,7 +24,7 @@ export function mmFirebaseDataEnabled() {
 }
 
 export function mmSupabaseAuthPrimary() {
-    return mmSyncBackend() === "supabase" && mmSupabaseDataEnabled();
+    return false;
 }
 
 function normalizeDocData(raw) {
@@ -99,13 +99,17 @@ export function mmSbSignOut() {
 
 export function mmSbOnAuthStateChanged(cb) {
     sbAuthCb = cb;
-    return loadClient().then(function (client) {
-        return client.auth.getSession().then(function (res) {
-            const session = res && res.data ? res.data.session : null;
-            const user = session && session.user ? { email: session.user.email } : null;
-            cb(user);
+    return loadClient()
+        .then(function (client) {
+            return client.auth.getSession().then(function (res) {
+                const session = res && res.data ? res.data.session : null;
+                const user = session && session.user ? { email: session.user.email } : null;
+                cb(user);
+            });
+        })
+        .catch(function () {
+            cb(null);
         });
-    });
 }
 
 export function mmSbGetSessionUser() {

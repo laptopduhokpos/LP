@@ -8,4 +8,4 @@ window.POS_SUPABASE_MOBILE = window.POS_SUPABASE_MOBILE || {
     enabled: true
 };
 /** supabase | firebase | both — mobile app reads this */
-window.MM_SYNC_BACKEND = window.MM_SYNC_BACKEND || "supabase";
+window.MM_SYNC_BACKEND = window.MM_SYNC_BACKEND || "both";
