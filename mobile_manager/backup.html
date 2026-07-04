@@ -99,8 +99,11 @@
             if (/\.github\.io$/i.test(location.hostname || "")) return "";
             try {
                 var p = location.pathname || "";
-                var idx = p.toLowerCase().indexOf("/public/mobile_manager");
+                var lower = p.toLowerCase();
+                var idx = lower.indexOf("/public/mobile_manager");
                 if (idx >= 0) return (location.origin + p.substring(0, idx)).replace(/\/$/, "");
+                var idxPriv = lower.indexOf("/_private/mobile_manager");
+                if (idxPriv >= 0) return (location.origin + p.substring(0, idxPriv)).replace(/\/$/, "");
             } catch (e) {}
             return (location.origin + "/pos").replace(/\/$/, "");
         }

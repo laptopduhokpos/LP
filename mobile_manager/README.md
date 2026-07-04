@@ -1,25 +1,37 @@
-# Mobile Manager — تەنها سەرچاوە (_PRIVATE)
-
-هەموو فایلەکانی ئەپ لێرەن. **هیچ کۆپییەک** لە `public/mobile_manager/` نییە.
-
-## تاقیکردنەوە (localhost)
-
-```
-http://localhost/pos/_PRIVATE/mobile_manager/
-```
-
-## GitHub (بۆ کڕیار)
-
-```powershell
-.\_PRIVATE\scripts\build-github-lp.ps1
-```
-
-Upload: `_PRIVATE/github_pages_LP/` → repo `laptopduhokpos/LP`
-
-## پاکێجی shop
-
-```powershell
-.\_PRIVATE\scripts\build-shop-package.ps1
-```
-
-تەنها `backup.html` دەچێتە `public/mobile_manager/` لە ناو ZIPـی کڕیار.
+# mobile_manager — سەرچاوەی ئەپ
+
+**تەنها شوێنی دەستکاری.** هەموو گۆڕانکاری لێرە بکە، پاشان build.
+
+## پێکهاتە
+
+```
+mobile_manager/
+├── index.html          ← UI، login، panels
+├── backup.html         ← داونلۆدی ZIP لە LAN (WiFi+PIN)
+├── manifest.json       ← PWA
+├── sw.js               ← Service Worker (لە root — PWA scope)
+├── css/
+│   └── mm-app.css
+├── js/
+│   ├── mm-app.js       ← Firebase، dashboard، کۆگە، قەرز
+│   ├── mm-snapshot-store.js
+│   └── mm-pdf-report.js
+└── assets/
+    ├── brand/
+    └── icons/          ← generate-mm-pwa-icons.ps1
+```
+
+## localhost
+
+```
+http://localhost/pos/_PRIVATE/mobile_manager/
+```
+
+## GitHub
+
+```powershell
+cd C:\xampp\htdocs\pos
+.\_PRIVATE\scripts\build-github-lp.ps1
+```
+
+وردەکاری: `../docs/MOBILE_MANAGER.md`
