@@ -8,9 +8,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             doc,
             onSnapshot,
             getDoc,
-            getDocFromServer
+            getDocFromServer,
+            setDoc
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { getStorage, ref as storageRef, getDownloadURL, getBlob } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+        import { getStorage, ref as storageRef, getDownloadURL, getBlob, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
         import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.18.13";
         import {
             mmSnapSave,
@@ -693,6 +694,53 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let unsubInventory = null;
         let unsubDebt = null;
         let mmBackupItems = [];
+        let mmBackupCleaning = false;
+        let mmLatestBackupUrl = "";
+        const mmBackupCleanedChannels = Object.create(null);
+
+        function mmSortBackupItems(items) {
+            return (items || []).slice().sort(function (a, b) {
+                return (Number(b.uploadedAt) || 0) - (Number(a.uploadedAt) || 0);
+            });
+        }
+
+        function mmCleanupOldCloudBackups(channelId, items) {
+            const sorted = mmSortBackupItems(items);
+            if (sorted.length <= 1) return Promise.resolve(sorted.slice(0, 1));
+            if (mmBackupCleaning) return Promise.resolve(sorted.slice(0, 1));
+            mmBackupCleaning = true;
+            const latest = sorted[0];
+            const old = sorted.slice(1);
+            const metaRef = doc(db, "pos_mobile_backups", channelId);
+            const jobs = old.map(function (x) {
+                if (!x || !x.name) return Promise.resolve();
+                const p = x.path || ("pos_mobile_backups/" + channelId + "/" + x.name);
+                return deleteObject(storageRef(storage, p)).catch(function () {});
+            });
+            return Promise.all(jobs)
+                .then(function () {
+                    return setDoc(
+                        metaRef,
+                        { items: [latest], latest: latest, updatedAt: Date.now() },
+                        { merge: true }
+                    );
+                })
+                .then(function () { return [latest]; })
+                .catch(function () { return [latest]; })
+                .finally(function () { mmBackupCleaning = false; });
+        }
+
+        function mmApplyBackupList(channelId, items) {
+            const sorted = mmSortBackupItems(items);
+            const one = sorted.slice(0, 1);
+            renderCloudBackupList(one);
+            if (sorted.length > 1 && !mmBackupCleanedChannels[channelId] && !mmBackupCleaning) {
+                mmBackupCleanedChannels[channelId] = true;
+                mmCleanupOldCloudBackups(channelId, sorted).then(function (cleaned) {
+                    renderCloudBackupList(cleaned);
+                });
+            }
+        }
         let unsubBackup = null;
         let activeChannelId = "";
         let refreshBusy = false;
@@ -782,6 +830,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             } catch (e) { return "—"; }
         }
 
+        function mmIsMobileDownload() {
+            return mmIsIos() || /Android/i.test(navigator.userAgent || "");
+        }
+
         function mmSaveBackupBlob(blob, fileName) {
             const fileNameSafe = fileName || "backup.zip";
             const file = new File([blob], fileNameSafe, { type: blob.type || "application/zip" });
@@ -799,44 +851,59 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             return Promise.resolve();
         }
 
+        function mmOpenBackupUrl(url) {
+            if (!url) return;
+            const w = window.open(url, "_blank");
+            if (!w) window.location.assign(url);
+        }
+
+        function mmPrefetchBackupUrl(item) {
+            mmLatestBackupUrl = "";
+            const openBtn = document.getElementById("mmBackupOpenBtn");
+            if (openBtn) {
+                openBtn.style.display = "none";
+                openBtn.href = "#";
+            }
+            if (!item || !item.name || !activeChannelId) return;
+            const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
+            getDownloadURL(storageRef(storage, path))
+                .then(function (url) {
+                    mmLatestBackupUrl = url;
+                    if (openBtn) {
+                        openBtn.href = url;
+                        openBtn.style.display = "block";
+                        openBtn.onclick = function (e) {
+                            e.preventDefault();
+                            mmOpenBackupUrl(url);
+                            if (mmIsIos()) {
+                                alert("iPhone:\nShare → Save to Files");
+                            }
+                        };
+                    }
+                })
+                .catch(function () {});
+        }
+
         function mmDownloadCloudBackup(item, btn) {
             if (!item || !item.name || !activeChannelId) return;
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            if (mmLatestBackupUrl) {
+                mmOpenBackupUrl(mmLatestBackupUrl);
+                if (mmIsIos()) alert("iPhone:\nShare → Save to Files");
+                return;
             }
-            const resetBtn = function () {
-                if (!btn) return;
-                btn.disabled = false;
-                btn.innerHTML = mmBackupDlLabel();
-            };
+            if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
-            const fileRef = storageRef(storage, path);
-            const fileName = item.name || "backup.zip";
-            getBlob(fileRef)
-                .then(function (blob) {
-                    if (!blob || blob.size < 64) throw new Error("فایل بەتاڵە");
-                    return mmSaveBackupBlob(blob, fileName);
-                })
-                .then(function () { resetBtn(); })
-                .catch(function () {
-                    return getDownloadURL(fileRef)
-                        .then(function (url) {
-                            const a = document.createElement("a");
-                            a.href = url;
-                            a.download = fileName;
-                            a.target = "_blank";
-                            a.rel = "noopener noreferrer";
-                            document.body.appendChild(a);
-                            a.click();
-                            a.remove();
-                        })
-                        .then(function () { resetBtn(); });
+            getDownloadURL(storageRef(storage, path))
+                .then(function (url) {
+                    mmLatestBackupUrl = url;
+                    mmOpenBackupUrl(url);
+                    if (mmIsIos()) alert("iPhone:\nShare → Save to Files");
                 })
                 .catch(function (err) {
-                    resetBtn();
-                    if (err && err.name === "AbortError") return;
                     alert("داونلۆد سەرنەکەوت: " + String(err.message || err));
+                })
+                .finally(function () {
+                    if (btn) btn.innerHTML = mmBackupDlLabel();
                 });
         }
 
@@ -844,7 +911,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             opts = opts || {};
             const box = document.getElementById("backupContent");
             if (!box) return;
-            mmBackupItems = items || [];
+            mmBackupItems = mmSortBackupItems(items || []).slice(0, 1);
             if (!mmBackupItems.length) {
                 const em = esc(activeChannelId || "");
                 let msg = 'پاشەکەوت لە Cloud نییە';
@@ -858,9 +925,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             box.innerHTML = mmBackupItems.map(function (it, idx) {
                 const name = esc(it.name || "backup.zip");
+                const label = name.indexOf("Latest") !== -1 ? "دوایین پاشەکەوت" : name;
                 const sub = mmFormatBackupUploadedAt(it) + " · " + formatBackupBytes(it.bytes);
-                return '<div class="backup-row">' +
-                    '<div class="backup-row-meta"><div class="backup-row-name">' + name + '</div><div class="backup-row-sub">' + sub + '</div></div>' +
+                return '<div class="backup-row backup-row--latest">' +
+                    '<div class="backup-row-meta"><div class="backup-row-name">' + esc(label) + '</div><div class="backup-row-sub">' + sub + '</div></div>' +
                     '<button type="button" class="backup-dl-btn" data-cloud-backup-idx="' + idx + '">' + mmBackupDlLabel() + '</button>' +
                     '</div>';
             }).join("");
@@ -873,6 +941,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     mmDownloadCloudBackup(it, btn);
                 });
             });
+            if (mmBackupItems[0]) mmPrefetchBackupUrl(mmBackupItems[0]);
         }
 
         function bindBackups(channelId) {
@@ -884,7 +953,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const metaRef = doc(db, "pos_mobile_backups", channelId);
             unsubBackup = onSnapshot(metaRef, function (snap) {
                 const data = snap.exists() ? snap.data() : null;
-                renderCloudBackupList(data && data.items ? data.items : []);
+                mmApplyBackupList(channelId, data && data.items ? data.items : []);
             }, function (err) {
                 const code = err && err.code ? String(err.code) : "";
                 let hint = "Firebase Rules پێویستە Publish بکرێت (Firestore + Storage)";
@@ -899,7 +968,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     if (box) box.innerHTML = '<div class="detail-empty"><i class="fas fa-spinner fa-spin"></i></div>';
                     getDocFromServer(metaRef).then(function (snap) {
                         const data = snap.exists() ? snap.data() : null;
-                        renderCloudBackupList(data && data.items ? data.items : []);
+                        mmApplyBackupList(channelId, data && data.items ? data.items : []);
                     }).catch(function () {
                         renderCloudBackupList(mmBackupItems);
                     });
