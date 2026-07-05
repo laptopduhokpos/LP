@@ -729,6 +729,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (panelInv) panelInv.classList.toggle("hidden", t !== "inv");
             if (panelDebt) panelDebt.classList.toggle("hidden", t !== "debt");
             if (panelBackup) panelBackup.classList.toggle("hidden", t !== "backup");
+            if (t === "backup" && activeChannelId) {
+                bindBackups(activeChannelId);
+            }
             setTabActive(tabHomeBtn, t === "home");
             setTabActive(tabDashBtn, t === "dash");
             setTabActive(tabInvBtn, t === "inv");
@@ -818,12 +821,20 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 });
         }
 
-        function renderCloudBackupList(items) {
+        function renderCloudBackupList(items, opts) {
+            opts = opts || {};
             const box = document.getElementById("backupContent");
             if (!box) return;
             mmBackupItems = items || [];
             if (!mmBackupItems.length) {
-                box.innerHTML = '<div class="detail-empty">پاشەکەوت لە Cloud نییە.<br><small>لە POS: بەڕێوەبردنی داتابەیس → پاشەکەوتکردن (ZIP)<br>Firebase sync پێویستە · بێ IP · بێ PIN</small></div>';
+                const em = esc(activeChannelId || "");
+                let msg = 'پاشەکەوت لە Cloud نییە';
+                if (opts.error) {
+                    msg += '<br><small style="color:#f87171;">' + esc(String(opts.error)) + '</small>';
+                }
+                msg += '<br><small dir="ltr">' + em + '</small>';
+                msg += '<br><small>① POS → Settings → Firebase login<br>② بەڕێوەبردنی داتابەیس → پاشەکەوت (ZIP)<br>③ یان «نێردن بۆ Mobile Manager»<br>Firebase Console: Storage Rules + Firestore Rules → Publish</small>';
+                box.innerHTML = '<div class="detail-empty">' + msg + '</div>';
                 return;
             }
             box.innerHTML = mmBackupItems.map(function (it, idx) {
@@ -855,8 +866,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             unsubBackup = onSnapshot(metaRef, function (snap) {
                 const data = snap.exists() ? snap.data() : null;
                 renderCloudBackupList(data && data.items ? data.items : []);
-            }, function () {
-                renderCloudBackupList([]);
+            }, function (err) {
+                const code = err && err.code ? String(err.code) : "";
+                let hint = "Firebase Rules پێویستە Publish بکرێت (Firestore + Storage)";
+                if (/permission|unauthenticated/i.test(code)) hint = "دەسەڵات نییە — Firestore Rules → pos_mobile_backups";
+                renderCloudBackupList([], { error: hint });
             });
             const refreshBtn = document.getElementById("mmRefreshCloudBackupsBtn");
             if (refreshBtn && !refreshBtn.__mmBound) {
