@@ -10,7 +10,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             getDoc,
             getDocFromServer
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { getStorage, ref as storageRef, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+        import { getStorage, ref as storageRef, getDownloadURL, getBlob } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
         import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.18.13";
         import {
             mmSnapSave,
@@ -782,6 +782,23 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             } catch (e) { return "—"; }
         }
 
+        function mmSaveBackupBlob(blob, fileName) {
+            const fileNameSafe = fileName || "backup.zip";
+            const file = new File([blob], fileNameSafe, { type: blob.type || "application/zip" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                return navigator.share({ files: [file], title: fileNameSafe });
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = fileNameSafe;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+            return Promise.resolve();
+        }
+
         function mmDownloadCloudBackup(item, btn) {
             if (!item || !item.name || !activeChannelId) return;
             if (btn) {
@@ -794,26 +811,28 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 btn.innerHTML = mmBackupDlLabel();
             };
             const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
-            getDownloadURL(storageRef(storage, path))
-                .then(function (url) { return fetch(url); })
-                .then(function (res) {
-                    if (!res.ok) throw new Error("HTTP " + res.status);
-                    return res.blob();
-                })
+            const fileRef = storageRef(storage, path);
+            const fileName = item.name || "backup.zip";
+            getBlob(fileRef)
                 .then(function (blob) {
-                    const fileName = item.name || "backup.zip";
-                    const file = new File([blob], fileName, { type: blob.type || "application/zip" });
-                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                        return navigator.share({ files: [file], title: fileName });
-                    }
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = fileName;
-                    a.click();
-                    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+                    if (!blob || blob.size < 64) throw new Error("فایل بەتاڵە");
+                    return mmSaveBackupBlob(blob, fileName);
                 })
                 .then(function () { resetBtn(); })
+                .catch(function () {
+                    return getDownloadURL(fileRef)
+                        .then(function (url) {
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = fileName;
+                            a.target = "_blank";
+                            a.rel = "noopener noreferrer";
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                        })
+                        .then(function () { resetBtn(); });
+                })
                 .catch(function (err) {
                     resetBtn();
                     if (err && err.name === "AbortError") return;
