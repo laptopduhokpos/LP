@@ -11,7 +11,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             getDocFromServer,
             setDoc
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { getStorage, ref as storageRef, getDownloadURL, getBlob, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+        import { getStorage, ref as storageRef, getBlob, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
         import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.18.13";
         import {
             mmSnapSave,
@@ -695,7 +695,6 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let unsubDebt = null;
         let mmBackupItems = [];
         let mmBackupCleaning = false;
-        let mmLatestBackupUrl = "";
         const mmBackupCleanedChannels = Object.create(null);
 
         function mmSortBackupItems(items) {
@@ -851,53 +850,14 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             return Promise.resolve();
         }
 
-        function mmOpenBackupUrl(url) {
-            if (!url) return;
-            const w = window.open(url, "_blank");
-            if (!w) window.location.assign(url);
-        }
-
-        function mmPrefetchBackupUrl(item) {
-            mmLatestBackupUrl = "";
-            const openBtn = document.getElementById("mmBackupOpenBtn");
-            if (openBtn) {
-                openBtn.style.display = "none";
-                openBtn.href = "#";
-            }
-            if (!item || !item.name || !activeChannelId) return;
-            const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
-            getDownloadURL(storageRef(storage, path))
-                .then(function (url) {
-                    mmLatestBackupUrl = url;
-                    if (openBtn) {
-                        openBtn.href = url;
-                        openBtn.style.display = "block";
-                        openBtn.onclick = function (e) {
-                            e.preventDefault();
-                            mmOpenBackupUrl(url);
-                            if (mmIsIos()) {
-                                alert("iPhone:\nShare → Save to Files");
-                            }
-                        };
-                    }
-                })
-                .catch(function () {});
-        }
-
         function mmDownloadCloudBackup(item, btn) {
             if (!item || !item.name || !activeChannelId) return;
-            if (mmLatestBackupUrl) {
-                mmOpenBackupUrl(mmLatestBackupUrl);
-                if (mmIsIos()) alert("iPhone:\nShare → Save to Files");
-                return;
-            }
-            if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            const fileName = item.name || "backup.zip";
             const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
-            getDownloadURL(storageRef(storage, path))
-                .then(function (url) {
-                    mmLatestBackupUrl = url;
-                    mmOpenBackupUrl(url);
-                    if (mmIsIos()) alert("iPhone:\nShare → Save to Files");
+            if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            getBlob(storageRef(storage, path))
+                .then(function (blob) {
+                    return mmSaveBackupBlob(blob, fileName);
                 })
                 .catch(function (err) {
                     alert("داونلۆد سەرنەکەوت: " + String(err.message || err));
@@ -941,7 +901,6 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     mmDownloadCloudBackup(it, btn);
                 });
             });
-            if (mmBackupItems[0]) mmPrefetchBackupUrl(mmBackupItems[0]);
         }
 
         function bindBackups(channelId) {
