@@ -175,6 +175,34 @@
         .home-tile.tile-pdf { border-color: rgba(239,68,68,.35); background: linear-gradient(160deg, rgba(239,68,68,.1), var(--surface-2)); grid-column: span 2; }
         .home-tile.tile-pdf i { color: #f87171; }
         .home-tile.tile-backup i { color: #a5b4fc; }
+        .home-tile.tile-wa { position: relative; border-color: rgba(37,211,102,.4); background: linear-gradient(160deg, rgba(37,211,102,.14), var(--surface-2)); grid-column: span 2; }
+        .home-tile.tile-wa i { color: #25d366; }
+        .mm-wa-badge {
+            position: absolute; top: 8px; left: 8px; min-width: 22px; height: 22px; padding: 0 6px;
+            border-radius: 999px; background: #25d366; color: #052e16; font-size: 0.72rem; font-weight: 800;
+            display: inline-flex; align-items: center; justify-content: center;
+        }
+        .mm-wa-banner { margin-top: 10px; }
+        .mm-wa-banner button {
+            width: 100%; border: none; border-radius: 14px; padding: 14px 16px; cursor: pointer;
+            background: #25d366; color: #052e16; font-weight: 800; font-size: 0.9rem;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .mm-wa-row {
+            display: flex; flex-direction: column; gap: 8px; padding: 12px; margin-bottom: 10px;
+            border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2);
+        }
+        .mm-wa-name { font-weight: 800; font-size: 0.95rem; }
+        .mm-wa-items { font-size: 0.78rem; color: var(--muted); white-space: pre-wrap; line-height: 1.4; }
+        .mm-wa-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .mm-wa-actions .btn-wa {
+            flex: 1; border: none; border-radius: 12px; padding: 12px; background: #25d366; color: #052e16;
+            font-weight: 800; cursor: pointer;
+        }
+        .mm-wa-actions .btn-done {
+            border: none; border-radius: 12px; padding: 12px 14px; background: var(--surface); color: var(--text);
+            border: 1px solid var(--line); font-weight: 700; cursor: pointer;
+        }
         .btn-pdf-featured {
             width: 100%; margin: 12px 0 4px; padding: 14px 16px; border: none; border-radius: 14px;
             background: linear-gradient(135deg, #dc2626, #f97316); color: #fff; font-weight: 800;

@@ -9,9 +9,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             onSnapshot,
             getDoc,
             getDocFromServer,
-            setDoc
+            setDoc,
+            updateDoc
         } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-        import { getStorage, ref as storageRef, getBlob, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+        import { getStorage, ref as storageRef, getBlob, getStream, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
         import { mmPrintTodaySummary } from "./mm-pdf-report.js?v=2.18.13";
         import {
             mmSnapSave,
@@ -695,6 +696,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let unsubDebt = null;
         let mmBackupItems = [];
         let mmBackupCleaning = false;
+        let mmBackupBlobCache = null;
+        let mmBackupBlobCacheKey = "";
+        let mmBackupPrefetchPromise = null;
         const mmBackupCleanedChannels = Object.create(null);
 
         function mmSortBackupItems(items) {
@@ -757,6 +761,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         const panelInv = document.getElementById("panelInv");
         const panelDebt = document.getElementById("panelDebt");
         const panelBackup = document.getElementById("panelBackup");
+        const panelFollowup = document.getElementById("panelFollowup");
         const bottomNav = document.getElementById("bottomNav");
         const tabHomeBtn = document.getElementById("tabHome");
         const tabDashBtn = document.getElementById("tabDash");
@@ -770,20 +775,21 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         function switchMobileTab(tab) {
-            let t = tab === "backup" ? "backup" : tab === "debt" ? "debt" : tab === "inv" ? "inv" : tab === "dash" ? "dash" : "home";
+            let t = tab === "backup" ? "backup" : tab === "followup" ? "followup" : tab === "debt" ? "debt" : tab === "inv" ? "inv" : tab === "dash" ? "dash" : "home";
             if (panelHome) panelHome.classList.toggle("hidden", t !== "home");
             if (panelDash) panelDash.classList.toggle("hidden", t !== "dash");
             if (panelInv) panelInv.classList.toggle("hidden", t !== "inv");
             if (panelDebt) panelDebt.classList.toggle("hidden", t !== "debt");
             if (panelBackup) panelBackup.classList.toggle("hidden", t !== "backup");
+            if (panelFollowup) panelFollowup.classList.toggle("hidden", t !== "followup");
             if (t === "backup" && activeChannelId) {
                 bindBackups(activeChannelId);
             }
-            setTabActive(tabHomeBtn, t === "home");
+            setTabActive(tabHomeBtn, t === "home" || t === "followup");
             setTabActive(tabDashBtn, t === "dash");
             setTabActive(tabInvBtn, t === "inv");
             setTabActive(tabDebtBtn, t === "debt");
-            try { localStorage.setItem("pos_mobile_tab", t); } catch (e) {}
+            try { localStorage.setItem("pos_mobile_tab", t === "followup" ? "home" : t); } catch (e) {}
             window.scrollTo({ top: 0, behavior: "smooth" });
         }
 
@@ -833,6 +839,124 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             return mmIsIos() || /Android/i.test(navigator.userAgent || "");
         }
 
+        function mmBackupCacheKey(channelId, item) {
+            if (!item) return "";
+            const p = item.path || ("pos_mobile_backups/" + channelId + "/" + item.name);
+            return String(channelId || "") + "|" + p + "|" + (item.uploadedAt || 0);
+        }
+
+        function mmBackupIdbGet(key) {
+            if (!key || !("indexedDB" in window)) return Promise.resolve(null);
+            return new Promise(function (resolve) {
+                const req = indexedDB.open("ld-mobile-manager", 1);
+                req.onerror = function () { resolve(null); };
+                req.onsuccess = function () {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains("snapshots")) {
+                        db.close();
+                        resolve(null);
+                        return;
+                    }
+                    const tx = db.transaction("snapshots", "readonly");
+                    const getReq = tx.objectStore("snapshots").get("backup_blob|" + key);
+                    getReq.onsuccess = function () {
+                        const row = getReq.result;
+                        resolve(row && row.blob instanceof Blob ? row.blob : null);
+                    };
+                    getReq.onerror = function () { resolve(null); };
+                    tx.oncomplete = function () { db.close(); };
+                };
+            });
+        }
+
+        function mmBackupIdbPut(key, blob) {
+            if (!key || !blob || !("indexedDB" in window)) return Promise.resolve();
+            return new Promise(function (resolve) {
+                const req = indexedDB.open("ld-mobile-manager", 1);
+                req.onerror = function () { resolve(); };
+                req.onupgradeneeded = function (e) {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains("snapshots")) {
+                        db.createObjectStore("snapshots");
+                    }
+                };
+                req.onsuccess = function () {
+                    const db = req.result;
+                    const tx = db.transaction("snapshots", "readwrite");
+                    tx.objectStore("snapshots").put({ blob: blob, savedAt: Date.now() }, "backup_blob|" + key);
+                    tx.oncomplete = function () { db.close(); resolve(); };
+                    tx.onerror = function () { db.close(); resolve(); };
+                };
+            });
+        }
+
+        function mmFetchBackupBlob(path, totalBytes, onProgress) {
+            const maxSize = 80 * 1024 * 1024;
+            return getStream(storageRef(storage, path), maxSize).then(function (stream) {
+                const reader = stream.getReader();
+                const chunks = [];
+                let received = 0;
+                function pump() {
+                    return reader.read().then(function (result) {
+                        if (result.done) {
+                            return new Blob(chunks, { type: "application/zip" });
+                        }
+                        chunks.push(result.value);
+                        received += result.value.length;
+                        if (onProgress) onProgress(received, totalBytes || received);
+                        return pump();
+                    });
+                }
+                return pump();
+            }).catch(function () {
+                return getBlob(storageRef(storage, path));
+            });
+        }
+
+        function mmUpdateBackupDlBtn(btn, html, disabled) {
+            if (!btn) return;
+            btn.innerHTML = html;
+            btn.disabled = !!disabled;
+        }
+
+        function mmPrefetchBackupBlob(item, btn) {
+            if (!item || !item.name || !activeChannelId) return Promise.resolve(null);
+            const cacheKey = mmBackupCacheKey(activeChannelId, item);
+            if (mmBackupBlobCache && mmBackupBlobCacheKey === cacheKey) {
+                mmUpdateBackupDlBtn(btn, mmBackupDlLabel(), false);
+                return Promise.resolve(mmBackupBlobCache);
+            }
+            if (mmBackupPrefetchPromise && mmBackupBlobCacheKey === cacheKey) {
+                return mmBackupPrefetchPromise;
+            }
+            const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
+            const totalBytes = Number(item.bytes) || 0;
+            mmBackupBlobCacheKey = cacheKey;
+            mmUpdateBackupDlBtn(btn, '<i class="fas fa-spinner fa-spin"></i> 0%', true);
+            mmBackupPrefetchPromise = mmBackupIdbGet(cacheKey).then(function (cached) {
+                if (cached) {
+                    mmBackupBlobCache = cached;
+                    mmUpdateBackupDlBtn(btn, mmBackupDlLabel() + " ✓", false);
+                    return cached;
+                }
+                return mmFetchBackupBlob(path, totalBytes, function (got, total) {
+                    const pct = total > 0 ? Math.min(99, Math.round((got / total) * 100)) : 0;
+                    mmUpdateBackupDlBtn(btn, '<i class="fas fa-spinner fa-spin"></i> ' + pct + "%", true);
+                }).then(function (blob) {
+                    mmBackupBlobCache = blob;
+                    mmBackupIdbPut(cacheKey, blob);
+                    mmUpdateBackupDlBtn(btn, mmBackupDlLabel() + " ✓", false);
+                    return blob;
+                });
+            }).catch(function () {
+                mmUpdateBackupDlBtn(btn, mmBackupDlLabel(), false);
+                return null;
+            }).finally(function () {
+                mmBackupPrefetchPromise = null;
+            });
+            return mmBackupPrefetchPromise;
+        }
+
         function mmSaveBackupBlob(blob, fileName) {
             const fileNameSafe = fileName || "backup.zip";
             const file = new File([blob], fileNameSafe, { type: blob.type || "application/zip" });
@@ -853,17 +977,33 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         function mmDownloadCloudBackup(item, btn) {
             if (!item || !item.name || !activeChannelId) return;
             const fileName = item.name || "backup.zip";
+            const cacheKey = mmBackupCacheKey(activeChannelId, item);
             const path = item.path || ("pos_mobile_backups/" + activeChannelId + "/" + item.name);
-            if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-            getBlob(storageRef(storage, path))
+            const totalBytes = Number(item.bytes) || 0;
+            mmUpdateBackupDlBtn(btn, '<i class="fas fa-spinner fa-spin"></i>', true);
+            const blobPromise = (mmBackupBlobCache && mmBackupBlobCacheKey === cacheKey)
+                ? Promise.resolve(mmBackupBlobCache)
+                : (mmBackupPrefetchPromise && mmBackupBlobCacheKey === cacheKey)
+                    ? mmBackupPrefetchPromise
+                    : mmFetchBackupBlob(path, totalBytes, function (got, total) {
+                        const pct = total > 0 ? Math.min(99, Math.round((got / total) * 100)) : 0;
+                        mmUpdateBackupDlBtn(btn, '<i class="fas fa-spinner fa-spin"></i> ' + pct + "%", true);
+                    }).then(function (blob) {
+                        mmBackupBlobCache = blob;
+                        mmBackupBlobCacheKey = cacheKey;
+                        mmBackupIdbPut(cacheKey, blob);
+                        return blob;
+                    });
+            blobPromise
                 .then(function (blob) {
+                    if (!blob) throw new Error("backup blob empty");
                     return mmSaveBackupBlob(blob, fileName);
                 })
                 .catch(function (err) {
                     alert("داونلۆد سەرنەکەوت: " + String(err.message || err));
                 })
                 .finally(function () {
-                    if (btn) btn.innerHTML = mmBackupDlLabel();
+                    mmUpdateBackupDlBtn(btn, mmBackupDlLabel() + (mmBackupBlobCache ? " ✓" : ""), false);
                 });
         }
 
@@ -900,6 +1040,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     e.preventDefault();
                     mmDownloadCloudBackup(it, btn);
                 });
+                mmPrefetchBackupBlob(it, btn);
             });
         }
 
@@ -2015,6 +2156,104 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             refreshToastTimer = setTimeout(function () { refreshToast.classList.remove("show"); }, 2200);
         }
 
+        let mmFollowupRows = [];
+
+        function mmEsc(s) {
+            return String(s == null ? "" : s)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+        }
+
+        function mmFollowupRowKey(row) {
+            return String(parseInt(row && row.sale_id, 10) || 0) + "|" + String((row && row.step_key) || "");
+        }
+
+        function mmRenderFollowups(d) {
+            const rows = d && Array.isArray(d.followups) ? d.followups : [];
+            mmFollowupRows = rows;
+            const n = Number(d && d.followupCount != null ? d.followupCount : rows.length) || rows.length;
+            const badge = document.getElementById("homeFollowupBadge");
+            if (badge) {
+                badge.textContent = String(n);
+                badge.classList.toggle("hidden", n <= 0);
+            }
+            const banner = document.getElementById("mmFollowupHomeBanner");
+            const bannerText = document.getElementById("mmFollowupHomeBannerText");
+            if (banner) banner.classList.toggle("hidden", n <= 0);
+            if (bannerText) {
+                bannerText.textContent = n === 1
+                    ? "ریسالێ بو واتسئاپێ فرێکە"
+                    : (n + " کریار: ریسالێ بو واتسئاپێ فرێکە");
+            }
+            const box = document.getElementById("followupContent");
+            if (!box) return;
+            if (!rows.length) {
+                box.innerHTML = '<div class="detail-empty">ئێستا کریار نینە بۆ واتسئاپێ.<br><br>ل POS سووچێ پەیوەندیا پشتی فرۆتنێ ڤەکە، و کریار دڤێت ناڤ و تەلەفۆن هەبیت.</div>';
+                return;
+            }
+            box.innerHTML = rows.map(function (row, idx) {
+                const name = mmEsc(row.customer_name || "کریار");
+                const items = mmEsc(row.item_names || "");
+                const phoneOk = !!String(row.phone || "").trim();
+                const wa = phoneOk
+                    ? ('<button type="button" class="btn-wa" data-fu-wa="' + idx + '"><i class="fab fa-whatsapp"></i> واتسئاپ</button>')
+                    : '<span class="mm-wa-items">تەلەفۆن نینە</span>';
+                return '<div class="mm-wa-row">' +
+                    '<div class="mm-wa-name">' + name + '</div>' +
+                    (items ? ('<div class="mm-wa-items">' + items + '</div>') : '') +
+                    '<div class="mm-wa-actions">' + wa +
+                    '<button type="button" class="btn-done" data-fu-done="' + idx + '"><i class="fas fa-check"></i></button>' +
+                    '</div></div>';
+            }).join("");
+        }
+
+        function mmOpenFollowupWa(idx) {
+            const row = mmFollowupRows[idx];
+            if (!row || !row.phone) {
+                showRefreshToast("تەلەفۆن نینە", true);
+                return;
+            }
+            const url = "https://wa.me/" + String(row.phone).replace(/[^\d]/g, "") + "?text=" + encodeURIComponent(row.text || "");
+            try { window.open(url, "_blank"); } catch (e) { window.location.href = url; }
+        }
+
+        async function mmAckFollowup(idx) {
+            const row = mmFollowupRows[idx];
+            if (!row || !activeChannelId) return;
+            const key = mmFollowupRowKey(row);
+            const ackData = {
+                sale_id: row.sale_id,
+                step_key: row.step_key,
+                sale_ids: Array.isArray(row.sale_ids) ? row.sale_ids : [row.sale_id],
+                at: Date.now()
+            };
+            const ackRef = doc(db, "pos_mobile_followup_ack", activeChannelId);
+            try {
+                await updateDoc(ackRef, { ["acks." + key]: ackData });
+            } catch (e1) {
+                try {
+                    const payload = { acks: {} };
+                    payload.acks[key] = ackData;
+                    await setDoc(ackRef, payload, { merge: true });
+                } catch (e2) {}
+            }
+            mmFollowupRows = mmFollowupRows.filter(function (_, i) { return i !== idx; });
+            mmRenderFollowups({ followups: mmFollowupRows, followupCount: mmFollowupRows.length });
+            showRefreshToast("هاتە نیشانەکرن");
+        }
+
+        const followupContentEl = document.getElementById("followupContent");
+        if (followupContentEl) {
+            followupContentEl.addEventListener("click", function (ev) {
+                const waBtn = ev.target.closest ? ev.target.closest("[data-fu-wa]") : null;
+                const doneBtn = ev.target.closest ? ev.target.closest("[data-fu-done]") : null;
+                if (waBtn) mmOpenFollowupWa(parseInt(waBtn.getAttribute("data-fu-wa"), 10));
+                if (doneBtn) mmAckFollowup(parseInt(doneBtn.getAttribute("data-fu-done"), 10));
+            });
+        }
+
         function applyDashboardData(d, opts) {
             opts = opts || {};
             setMobileAmountMeta(d);
@@ -2046,6 +2285,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (hSales0) hSales0.textContent = formatMobileMoney(0);
                 if (!opts.silent) setStatus("چاوەڕێی یەکەم sync", false);
                 mmSnapDashboard = null;
+                mmRenderFollowups({ followups: [], followupCount: 0 });
                 return;
             }
             const priv = mmPrivacyFromDoc(d);
@@ -2077,6 +2317,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmUpdateConnectionStatus({ live: true });
             }
             mmSnapDashboard = Object.assign({}, d);
+            mmRenderFollowups(d);
             if (activeChannelId && !opts.fromCache) {
                 mmSnapSaveDebounced(activeChannelId, "dashboard", d);
             }
@@ -2499,6 +2740,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         if (homeGoDash) homeGoDash.addEventListener("click", () => switchMobileTab("dash"));
         if (homeGoInv) homeGoInv.addEventListener("click", () => switchMobileTab("inv"));
         if (homeGoDebt) homeGoDebt.addEventListener("click", () => switchMobileTab("debt"));
+        const homeGoFollowup = document.getElementById("homeGoFollowup");
+        if (homeGoFollowup) homeGoFollowup.addEventListener("click", () => switchMobileTab("followup"));
+        const followupBackHome = document.getElementById("followupBackHome");
+        if (followupBackHome) followupBackHome.addEventListener("click", () => switchMobileTab("home"));
+        const mmFollowupHomeBannerBtn = document.getElementById("mmFollowupHomeBannerBtn");
+        if (mmFollowupHomeBannerBtn) mmFollowupHomeBannerBtn.addEventListener("click", () => switchMobileTab("followup"));
         const homeGoBackup = document.getElementById("homeGoBackup");
         if (homeGoBackup) homeGoBackup.addEventListener("click", () => switchMobileTab("backup"));
         const homeGoPdf = document.getElementById("homeGoPdf");
