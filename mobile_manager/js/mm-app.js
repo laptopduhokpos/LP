@@ -23,6 +23,32 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
+        const MM_JEWELRY_JS_V = "2.18.52";
+        let mmJewelryMod = null;
+        let mmShopIsJewelry = false;
+        window.mmJewelryRates = null;
+
+        async function mmApplyShopChannel(mode, rates) {
+            const isJew = String(mode || "").toLowerCase() === "jewelry";
+            mmShopIsJewelry = isJew;
+            if (rates) window.mmJewelryRates = rates;
+            if (!isJew) {
+                document.body.classList.remove("mm-jewelry-shop");
+                return;
+            }
+            try {
+                if (!mmJewelryMod) {
+                    mmJewelryMod = await import("./mm-jewelry.js?v=" + MM_JEWELRY_JS_V);
+                }
+                if (typeof mmJewelryMod.mmJewelryInit === "function") {
+                    mmJewelryMod.mmJewelryInit({ rates: window.mmJewelryRates || rates });
+                }
+                if (rates && typeof mmJewelryMod.mmJewelrySetRates === "function") {
+                    mmJewelryMod.mmJewelrySetRates(rates);
+                }
+            } catch (eJew) {}
+        }
+
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {
             const m = document.getElementById("authMsg");
@@ -789,6 +815,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 bindBackups(activeChannelId);
             }
             if (t === "entry") {
+                if (mmShopIsJewelry) mmApplyShopChannel("jewelry", window.mmJewelryRates);
                 if (typeof populateEntryCategories === "function") populateEntryCategories();
                 if (typeof populateEntryManufacturers === "function") populateEntryManufacturers();
                 if (typeof calcEntryTotalStock === "function") calcEntryTotalStock();
@@ -2263,6 +2290,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                                 cats.push(s);
                             }
                         });
+                        if (json.systemMode) mmApplyShopChannel(json.systemMode, json.jewelryRates);
                     }
                 } catch(e) {}
             }
@@ -2538,6 +2566,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (noteEl) noteEl.value = found.note || "";
             if (saleEl) saleEl.checked = (found.forSale !== 0);
 
+            if (mmShopIsJewelry && mmJewelryMod && typeof mmJewelryMod.mmJewelryFill === "function") {
+                mmJewelryMod.mmJewelryFill(found);
+            }
+
             if (modeWrap) modeWrap.classList.remove("hidden");
             setEntryQtyMode("add");
 
@@ -2691,6 +2723,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             toggleEntryPack(false);
             toggleEntryCarton(false);
             toggleEntryTrack(true);
+            if (mmShopIsJewelry && mmJewelryMod && typeof mmJewelryMod.mmJewelryReset === "function") {
+                mmJewelryMod.mmJewelryReset();
+            }
             resetEntryStatus();
             calcEntryTotalStock();
         }
@@ -2900,6 +2935,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 forSale: forSale,
                 added_at: Date.now()
             };
+            if (mmShopIsJewelry && mmJewelryMod && typeof mmJewelryMod.mmJewelryCollect === "function") {
+                const jew = mmJewelryMod.mmJewelryCollect();
+                if (jew) Object.assign(itemPayload, jew);
+            }
 
             let savedLocally = false;
             let savedCloud = false;
@@ -2939,6 +2978,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     if (itemPayload.minStock) fd.append("minStock", itemPayload.minStock);
                     if (itemPayload.note) fd.append("note", itemPayload.note);
                     fd.append("forSale", itemPayload.forSale);
+                    if (itemPayload.metal_type) fd.append("metal_type", itemPayload.metal_type);
+                    if (itemPayload.karat != null) fd.append("karat", itemPayload.karat);
+                    if (itemPayload.weight_grams != null) fd.append("weight_grams", itemPayload.weight_grams);
+                    if (itemPayload.making_charge != null) fd.append("making_charge", itemPayload.making_charge);
+                    if (itemPayload.jewelry_price_mode) fd.append("jewelry_price_mode", itemPayload.jewelry_price_mode);
+                    if (itemPayload.jewelry_entry_kind) fd.append("jewelry_entry_kind", itemPayload.jewelry_entry_kind);
 
                     const res = await fetch(posBase + "/mobile_entry.php", {
                         method: "POST",
@@ -3277,6 +3322,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             mmSnapDashboard = Object.assign({}, d);
             mmRenderFollowups(d);
+            if (d.systemMode) mmApplyShopChannel(d.systemMode, d.jewelryRates);
             if (activeChannelId && !opts.fromCache) {
                 mmSnapSaveDebounced(activeChannelId, "dashboard", d);
             }
