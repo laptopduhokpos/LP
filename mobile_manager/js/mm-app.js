@@ -23,7 +23,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
-        const MM_JEWELRY_JS_V = "2.18.55";
+        const MM_JEWELRY_JS_V = "2.18.59";
         let mmJewelryMod = null;
         let mmShopIsJewelry = false;
         window.mmJewelryRates = null;
@@ -31,11 +31,30 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         async function mmApplyShopChannel(mode, rates) {
             const isJew = String(mode || "").toLowerCase() === "jewelry";
             mmShopIsJewelry = isJew;
-            if (rates) window.mmJewelryRates = rates;
+            window.mmShopIsJewelry = isJew;
             if (!isJew) {
-                document.body.classList.remove("mm-jewelry-shop");
+                window.mmJewelryRates = null;
+                document.body.classList.remove("mm-jewelry-shop", "mm-jew-metal", "mm-jew-watch");
+                try {
+                    if (mmJewelryMod && typeof mmJewelryMod.mmJewelryTeardown === "function") {
+                        mmJewelryMod.mmJewelryTeardown();
+                    } else {
+                        ["mmJewelryRatesCard", "mmJewelryCard", "mmJewRatesFab", "mmJewRatesModal"].forEach(function (id) {
+                            const n = document.getElementById(id);
+                            if (n) n.remove();
+                        });
+                        const titleOff = document.querySelector("#panelEntry .dash-title");
+                        if (titleOff) {
+                            delete titleOff.dataset.jew;
+                            titleOff.innerHTML = '<i class="fas fa-barcode" style="color:#10b981"></i> ئیدخالا کاڵایان ب مۆبایلێ';
+                        }
+                        const subOff = document.querySelector("#panelEntry p.sub");
+                        if (subOff) subOff.textContent = "سکان ب کامێرێ یان نڤیسین · تاک، پاکێت، کارتۆن و هەمی داتایان";
+                    }
+                } catch (eOff) {}
                 return;
             }
+            if (rates) window.mmJewelryRates = rates;
             try {
                 if (!mmJewelryMod) {
                     mmJewelryMod = await import("./mm-jewelry.js?v=" + MM_JEWELRY_JS_V);
@@ -50,6 +69,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         document.addEventListener("mm-jewelry-save-rates", async function (ev) {
+            if (!mmShopIsJewelry) return;
             const rates = ev && ev.detail;
             if (!rates) return;
             window.mmJewelryRates = rates;
@@ -91,6 +111,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     }
                 } catch (eFb) {}
             }
+        });
+
+        document.addEventListener("mm-jewelry-rates-changed", function () {
+            try { refreshInventoryView(); } catch (eInvR) {}
         });
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
@@ -381,6 +405,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
             mmSwitchingShop = true;
             try {
+                mmApplyShopChannel("market");
                 if (cur && cur !== em) {
                     await signOut(auth);
                 }
@@ -860,6 +885,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             if (t === "entry") {
                 if (mmShopIsJewelry) mmApplyShopChannel("jewelry", window.mmJewelryRates);
+                else mmApplyShopChannel("market");
                 if (typeof populateEntryCategories === "function") populateEntryCategories();
                 if (typeof populateEntryManufacturers === "function") populateEntryManufacturers();
                 if (typeof calcEntryTotalStock === "function") calcEntryTotalStock();
@@ -1878,6 +1904,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 "</tr></thead><tbody>";
 
             list.forEach((p) => {
+                const live = (mmShopIsJewelry && mmJewelryMod && typeof mmJewelryMod.mmJewelryLiveMoney === "function")
+                    ? mmJewelryMod.mmJewelryLiveMoney(p)
+                    : { sell: 0, buy: 0 };
+                const showCost = (Number(p.cost) > 0) ? p.cost : ((live.buy > 0) ? live.buy : p.cost);
+                const showPrice = (live.sell > 0) ? live.sell : p.price;
                 const st = p.status || "ok";
                 let rowCls = "";
                 if (p.lossPrice) rowCls = "inv-tr-loss";
@@ -1895,8 +1926,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     '<td class="inv-td-name">' + esc(p.name || "—") + lossHint + "</td>" +
                     "<td>" + esc(p.category || "—") + "</td>" +
                     "<td>" + esc(p.manufacturer || "—") + "</td>" +
-                    '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(p.cost)) + "</td>" +
-                    '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(p.price)) + "</td>" +
+                    '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(showCost)) + "</td>" +
+                    '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(showPrice)) + "</td>" +
                     '<td class="inv-td-qty ' + st + '">' + formatQty(p.qty) + "</td>" +
                     "<td>" + esc(p.minStock != null ? p.minStock : "—") + "</td>" +
                     "<td>" + esc(p.expiry || "—") + "</td>" +
@@ -2330,15 +2361,17 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 try {
                     const res = await fetch(posBase + "/mobile_entry.php?ajax=1&action=get_meta");
                     const json = await res.json();
-                    if (json && json.status === "success" && Array.isArray(json.categories)) {
-                        json.categories.forEach(c => {
-                            const s = String(c || "").trim();
-                            if (s && !seen[s]) {
-                                seen[s] = true;
-                                cats.push(s);
-                            }
-                        });
-                        if (json.systemMode) mmApplyShopChannel(json.systemMode, json.jewelryRates);
+                    if (json && json.status === "success") {
+                        if (Array.isArray(json.categories)) {
+                            json.categories.forEach(c => {
+                                const s = String(c || "").trim();
+                                if (s && !seen[s]) {
+                                    seen[s] = true;
+                                    cats.push(s);
+                                }
+                            });
+                        }
+                        mmApplyShopChannel(json.systemMode || "market", json.jewelryRates);
                     }
                 } catch(e) {}
             }
@@ -2808,6 +2841,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (item.wholesalePrice !== undefined) p.wholesalePrice = item.wholesalePrice;
                 if (item.pieces_per_pack) p.pieces_per_pack = item.pieces_per_pack;
                 if (item.packs_per_carton) p.packs_per_carton = item.packs_per_carton;
+                if (item.metal_type) p.metal_type = item.metal_type;
+                if (item.karat != null) p.karat = item.karat;
+                if (item.weight_grams != null) p.weight_grams = item.weight_grams;
+                if (item.making_charge != null) p.making_charge = item.making_charge;
+                if (item.jewelry_price_mode) p.jewelry_price_mode = item.jewelry_price_mode;
                 if (item.finalQty !== undefined) {
                     p.qty = item.finalQty;
                 } else if (item.qty_mode === "set") {
@@ -2839,7 +2877,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     takeawayPrice: item.takeawayPrice || item.wholesalePrice || 0,
                     takeawayPrice_pack: item.takeawayPrice_pack || 0,
                     takeawayPrice_carton: item.takeawayPrice_carton || 0,
-                    wholesalePrice: item.wholesalePrice || 0
+                    wholesalePrice: item.wholesalePrice || 0,
+                    metal_type: item.metal_type || "",
+                    karat: item.karat,
+                    weight_grams: item.weight_grams,
+                    making_charge: item.making_charge,
+                    jewelry_price_mode: item.jewelry_price_mode || ""
                 });
             }
             refreshInventoryView();
@@ -3338,6 +3381,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (!opts.silent) setStatus("چاوەڕێی یەکەم sync", false);
                 mmSnapDashboard = null;
                 mmRenderFollowups({ followups: [], followupCount: 0 });
+                try { mmApplyShopChannel("market"); } catch (eNoDash) {}
                 return;
             }
             const priv = mmPrivacyFromDoc(d);
@@ -3370,7 +3414,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             mmSnapDashboard = Object.assign({}, d);
             mmRenderFollowups(d);
-            if (d.systemMode) mmApplyShopChannel(d.systemMode, d.jewelryRates);
+            mmApplyShopChannel(d.systemMode || "market", d.jewelryRates);
             if (activeChannelId && !opts.fromCache) {
                 mmSnapSaveDebounced(activeChannelId, "dashboard", d);
             }
@@ -4607,6 +4651,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 activeChannelId = "";
                 mmHasLocalCache = false;
                 mmLastCacheSavedAt = null;
+                try { mmApplyShopChannel("market"); } catch (eJewOff) {}
                 if (appShell) appShell.classList.remove("is-logged-in");
                 if (refreshBtn) refreshBtn.classList.add("hidden");
                 const topChip = document.getElementById("topbarTokenChip");
@@ -4652,6 +4697,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             );
             const channelId = user.email.toLowerCase();
             activeChannelId = channelId;
+            try { mmApplyShopChannel("market"); } catch (eJewReset) {}
             initMobileTokens(channelId);
             mmLoadCachedBusinessMeta(channelId);
             const dayKey = getMobileBusinessDayKey();

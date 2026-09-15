@@ -417,8 +417,25 @@ function injectCard() {
     updateFabChip();
 }
 
+export function mmJewelryTeardown() {
+    mmJewReady = false;
+    document.body.classList.remove("mm-jewelry-shop", "mm-jew-metal", "mm-jew-watch");
+    ["mmJewelryRatesCard", "mmJewelryCard", "mmJewRatesFab", "mmJewRatesModal"].forEach((id) => {
+        const old = el(id);
+        if (old) old.remove();
+    });
+    const title = document.querySelector("#panelEntry .dash-title");
+    if (title && title.dataset.jew) {
+        delete title.dataset.jew;
+        title.innerHTML = '<i class="fas fa-barcode" style="color:#10b981"></i> ئیدخالا کاڵایان ب مۆبایلێ';
+    }
+    const sub = document.querySelector("#panelEntry p.sub");
+    if (sub) sub.textContent = "سکان ب کامێرێ یان نڤیسین · تاک، پاکێت، کارتۆن و هەمی داتایان";
+}
+
 export function mmJewelryInit(opts) {
     opts = opts || {};
+    if (window.mmShopIsJewelry !== true) return;
     document.body.classList.add("mm-jewelry-shop");
     if (mmJewReady && el("mmJewelryCard") && el("mmJewRatesFab")) {
         if (opts.rates) mmJewelrySetRates(opts.rates);
@@ -451,6 +468,24 @@ export function mmJewelrySetRates(rates) {
         previewPrice();
         updateFabChip();
     }
+    try {
+        document.dispatchEvent(new CustomEvent("mm-jewelry-rates-changed", { detail: next }));
+    } catch (eEv) {}
+}
+
+export function mmJewelryLiveMoney(p) {
+    p = p || {};
+    const grams = num(p.weight_grams != null ? p.weight_grams : p.jewelry_weight);
+    if (!(grams > 0)) return { sell: 0, buy: 0 };
+    const metal = String(p.metal_type || p.jewelry_metal || "silver").toLowerCase() === "gold" ? "gold" : "silver";
+    const karat = p.karat != null && p.karat !== "" ? p.karat : (metal === "gold" ? "21" : "925");
+    const making = num(p.making_charge != null ? p.making_charge : p.jewelry_making);
+    const rate = rateFor(metal, karat);
+    const buy = buyRateFor(metal, karat);
+    return {
+        sell: rate > 0 ? Math.round(grams * rate + making) : 0,
+        buy: buy > 0 ? Math.round(grams * buy) : 0
+    };
 }
 
 export function mmJewelryCollect() {
