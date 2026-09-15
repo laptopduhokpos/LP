@@ -2077,6 +2077,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (!val) return;
             closeInvScanner();
             if (invScannerTarget && invScannerTarget.indexOf("entry") === 0) {
+                switchMobileTab("entry");
                 if (typeof applyEntryScanResult === "function") {
                     applyEntryScanResult(val, invScannerTarget);
                 }
@@ -2171,9 +2172,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         async function openInvScanner(target) {
-            invScannerTarget = target === "entry" ? "entry" : "search";
+            var t = String(target || "search");
+            invScannerTarget = (t.indexOf("entry") === 0) ? t : "search";
             if (invScannerTarget === "search") {
                 switchMobileTab("inv");
+            } else {
+                switchMobileTab("entry");
             }
             const modal = document.getElementById("invScannerModal");
             const msg = document.getElementById("invScannerMsg");
