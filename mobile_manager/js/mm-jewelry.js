@@ -145,36 +145,58 @@ function syncKindUi() {
     const qtyLbl = document.querySelector("label[for='mmEntryStockPiece']");
     if (qtyLbl) qtyLbl.textContent = "عەدەد";
     if (stockBox) stockBox.style.display = metal ? "none" : "";
+    const modeWrap = el("mmJewPriceMode") && el("mmJewPriceMode").closest(".form-group");
+    if (modeWrap) modeWrap.style.display = metal ? "none" : "none";
+    lockMoneyFields(metal);
     previewPrice();
+}
+
+function lockMoneyFields(lock) {
+    ["mmEntryPrice", "mmEntryCost"].forEach(function (id) {
+        const n = el(id);
+        if (!n) return;
+        n.readOnly = !!lock;
+        n.tabIndex = lock ? -1 : 0;
+        n.style.opacity = lock ? "0.92" : "";
+        n.style.pointerEvents = lock ? "none" : "";
+        n.style.background = lock ? "rgba(15,23,42,0.45)" : "";
+        if (lock) delete n.dataset.userPicked;
+        n.placeholder = lock ? "خۆکار ژ گرام" : "0";
+    });
 }
 
 function previewPrice() {
     const hint = el("mmJewPreview");
-    if (!hint) return;
     if (!isMetalKind()) {
-        hint.textContent = "سەعات / قفڵ / قوطی — نرخێ جێگیر ل خانا فرۆشتنێ بنڤیسە.";
+        lockMoneyFields(false);
+        if (hint) hint.textContent = "سەعات / قفڵ / قوطی — نرخێ جێگیر ل خانا فرۆشتنێ بنڤیسە.";
         return;
     }
-    const mode = (el("mmJewPriceMode") && el("mmJewPriceMode").value) || "by_weight";
+    lockMoneyFields(true);
     const grams = num(el("mmJewWeight") && el("mmJewWeight").value);
     const making = num(el("mmJewMaking") && el("mmJewMaking").value);
     const metal = (el("mmJewMetal") && el("mmJewMetal").value) || "silver";
     const karat = (el("mmJewKarat") && el("mmJewKarat").value) || "";
     const rate = rateFor(metal, karat);
     const buy = buyRateFor(metal, karat);
-    if (mode === "by_weight" && grams > 0 && rate > 0) {
+    const priceEl = el("mmEntryPrice");
+    const costEl = el("mmEntryCost");
+    if (grams > 0 && rate > 0) {
         const sell = Math.round(grams * rate + making);
         const cost = buy > 0 ? Math.round(grams * buy) : 0;
-        const priceEl = el("mmEntryPrice");
-        const costEl = el("mmEntryCost");
-        if (priceEl && !priceEl.dataset.userPicked) priceEl.value = String(sell);
-        if (costEl && !costEl.dataset.userPicked && cost > 0) costEl.value = String(cost);
-        hint.textContent = "فرۆشتن ≈ " + sell.toLocaleString("en-US") + "  ·  گرام × نرخێ ڕۆژ + کرێی کار";
-    } else if (mode === "by_weight") {
-        hint.textContent = rate > 0 ? "کێش (گرام) بنڤیسە — نرخ ژ ڕۆژانە دێت." : "سەرێ ڤێ پەڕێ نرخێ ڕۆژانە بنڤیسە و پاراستن بگرە.";
+        if (priceEl) priceEl.value = String(sell);
+        if (costEl) costEl.value = cost > 0 ? String(cost) : "0";
+        if (hint) hint.textContent = "فرۆشتن " + sell.toLocaleString("en-US") + " = گرام × نرخێ ڕۆژ + کرێی کار · کڕین " + (cost ? cost.toLocaleString("en-US") : "—") + " — دەستکاری ناهێت.";
     } else {
-        hint.textContent = "نرخێ جێگیر — ل خانا فرۆشتنێ بنڤیسە.";
+        if (priceEl) priceEl.value = "";
+        if (costEl) costEl.value = "";
+        if (hint) {
+            hint.textContent = rate > 0
+                ? "کێش (گرام) بنڤیسە — بهایێ فرۆشتن و کڕینێ خۆکار دێت."
+                : "دوگمێ نرخێ ڕۆژانە بگرە و کڕین/فرۆشتن بنڤیسە.";
+        }
     }
+    updateFabChip();
 }
 
 function fillRatesForm() {
@@ -252,43 +274,82 @@ function flashRatesMsg(ok, text) {
     setTimeout(() => { if (msg.textContent === text) msg.textContent = ""; }, 3500);
 }
 
+function updateFabChip() {
+    const txt = el("mmJewRatesFabTxt");
+    if (!txt) return;
+    const r = normalizeRates(mmJewRates);
+    const g = r.silverGrades.find((x) => x.code === "925") || r.silverGrades[0];
+    const sell = g ? g.sell : r.silver;
+    txt.textContent = sell > 0 ? ("نرخێ ڕۆژ · " + sell.toLocaleString("en-US")) : "نرخێ ڕۆژانە";
+}
+
+function openRatesModal() {
+    fillRatesForm();
+    const m = el("mmJewRatesModal");
+    if (m) m.style.display = "flex";
+}
+
+function closeRatesModal() {
+    const m = el("mmJewRatesModal");
+    if (m) m.style.display = "none";
+}
+
 function saveDailyRates() {
     const rates = readRatesFromForm();
     mmJewRates = rates;
     window.mmJewelryRates = rates;
     fillKaratOptions();
     previewPrice();
+    updateFabChip();
     document.dispatchEvent(new CustomEvent("mm-jewelry-save-rates", { detail: rates }));
-    flashRatesMsg(true, "نرخێ ڕۆژانە هاتە پاراستن");
+    flashRatesMsg(true, "نرخێ ڕۆژانە هاتە پاراستن — لاپتۆب ژی دگوهۆڕیت");
+    setTimeout(closeRatesModal, 450);
 }
 
 function injectCard() {
     const form = el("mmEntryForm");
     const unitWrap = form && form.querySelector(".entry-unit-toggle-wrap");
-    if (!form || !unitWrap) return;
-    ["mmJewelryRatesCard", "mmJewelryCard"].forEach((id) => {
+    const panel = el("panelEntry");
+    if (!form || !unitWrap || !panel) return;
+    ["mmJewelryRatesCard", "mmJewelryCard", "mmJewRatesFab", "mmJewRatesModal"].forEach((id) => {
         const old = el(id);
         if (old) old.remove();
     });
 
-    const ratesBox = document.createElement("div");
-    ratesBox.id = "mmJewelryRatesCard";
-    ratesBox.className = "mm-jew-card mm-jew-rates-card";
-    ratesBox.innerHTML = `
-        <div class="mm-jew-card-title"><i class="fas fa-coins"></i> نرخێ ڕۆژانە — کڕین و فرۆشتن (گرام)</div>
-        <p class="mm-jew-help">وەک لاپتۆب: نرخێ هەر گرامێک بنڤیسە، پاشان پاراستن. سەعات ل خوارێ جودایە.</p>
-        <div class="mm-jew-sub">زیڤ</div>
-        <div class="mm-jew-rate-head"><span>دەرجە</span><span>کڕین</span><span>فرۆشتن</span></div>
-        <div id="mmJewSilverRates"></div>
-        <div class="mm-jew-sub" style="margin-top:10px;">زێر</div>
-        <div class="mm-jew-rate-head"><span>عیار</span><span>کڕین</span><span>فرۆشتن</span></div>
-        <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">21K</span><input id="mmJewBuy21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-        <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">18K</span><input id="mmJewBuy18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-        <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">22K</span><input id="mmJewBuy22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-        <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">24K</span><input id="mmJewBuy24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-        <button type="button" id="mmJewSaveRatesBtn" class="mm-jew-save-btn"><i class="fas fa-save"></i> پاراستنا نرخێ ڕۆژانە</button>
-        <p id="mmJewRatesMsg" class="mm-jew-msg"></p>
+    const fab = document.createElement("button");
+    fab.type = "button";
+    fab.id = "mmJewRatesFab";
+    fab.className = "mm-jew-rates-fab";
+    fab.innerHTML = '<i class="fas fa-coins"></i><span id="mmJewRatesFabTxt">نرخێ ڕۆژانە</span>';
+    fab.addEventListener("click", openRatesModal);
+    panel.appendChild(fab);
+
+    const modal = document.createElement("div");
+    modal.id = "mmJewRatesModal";
+    modal.className = "mm-jew-rates-modal";
+    modal.style.display = "none";
+    modal.innerHTML = `
+        <div class="mm-jew-rates-sheet" role="dialog" aria-modal="true">
+            <div class="mm-jew-rates-sheet-head">
+                <div class="mm-jew-card-title" style="margin:0;"><i class="fas fa-coins"></i> نرخێ ڕۆژانە</div>
+                <button type="button" id="mmJewRatesCloseBtn" class="mm-jew-rates-close" aria-label="داخستن">✖</button>
+            </div>
+            <p class="mm-jew-help">کڕین و فرۆشتنا هەر گرامێک — ل لاپتۆب و موبایل پێکڤە دگوهۆڕیت.</p>
+            <div class="mm-jew-sub">زیڤ</div>
+            <div class="mm-jew-rate-head"><span>دەرجە</span><span>کڕین</span><span>فرۆشتن</span></div>
+            <div id="mmJewSilverRates"></div>
+            <div class="mm-jew-sub" style="margin-top:10px;">زێر</div>
+            <div class="mm-jew-rate-head"><span>عیار</span><span>کڕین</span><span>فرۆشتن</span></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">21K</span><input id="mmJewBuy21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">18K</span><input id="mmJewBuy18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">22K</span><input id="mmJewBuy22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">24K</span><input id="mmJewBuy24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <button type="button" id="mmJewSaveRatesBtn" class="mm-jew-save-btn"><i class="fas fa-save"></i> پاراستن</button>
+            <p id="mmJewRatesMsg" class="mm-jew-msg"></p>
+        </div>
     `;
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeRatesModal(); });
+    panel.appendChild(modal);
 
     const box = document.createElement("div");
     box.id = "mmJewelryCard";
@@ -326,7 +387,7 @@ function injectCard() {
                     <input id="mmJewMaking" type="number" min="0" step="1" placeholder="0" inputmode="numeric" dir="ltr">
                 </div>
             </div>
-            <div class="form-group" style="margin:8px 0 6px;">
+            <div class="form-group" style="margin:8px 0 6px;display:none;">
                 <label class="field-label" for="mmJewPriceMode">شێوازێ نرخێ</label>
                 <select id="mmJewPriceMode">
                     <option value="by_weight" selected>بە گرام (نرخێ ڕۆژانە)</option>
@@ -337,7 +398,6 @@ function injectCard() {
         </div>
     `;
 
-    form.insertBefore(ratesBox, unitWrap);
     form.insertBefore(box, unitWrap);
 
     const bind = (id, ev, fn) => {
@@ -349,38 +409,47 @@ function injectCard() {
     bind("mmJewKarat", "change", previewPrice);
     bind("mmJewWeight", "input", previewPrice);
     bind("mmJewMaking", "input", previewPrice);
-    bind("mmJewPriceMode", "change", previewPrice);
     bind("mmJewSaveRatesBtn", "click", saveDailyRates);
-    const priceEl = el("mmEntryPrice");
-    if (priceEl) priceEl.addEventListener("input", () => { priceEl.dataset.userPicked = "1"; });
-    const costEl = el("mmEntryCost");
-    if (costEl) costEl.addEventListener("input", () => { costEl.dataset.userPicked = "1"; });
+    bind("mmJewRatesCloseBtn", "click", closeRatesModal);
     fillRatesForm();
     fillKaratOptions();
     syncKindUi();
+    updateFabChip();
 }
 
 export function mmJewelryInit(opts) {
     opts = opts || {};
-    if (opts.rates) mmJewRates = normalizeRates(opts.rates);
     document.body.classList.add("mm-jewelry-shop");
+    if (mmJewReady && el("mmJewelryCard") && el("mmJewRatesFab")) {
+        if (opts.rates) mmJewelrySetRates(opts.rates);
+        return;
+    }
+    if (opts.rates) mmJewRates = normalizeRates(opts.rates);
     const title = document.querySelector("#panelEntry .dash-title");
     if (title && !title.dataset.jew) {
         title.dataset.jew = "1";
         title.innerHTML = '<i class="fas fa-coins" style="color:#c9a227"></i> ئیدخالا زیڤ و زێر';
     }
     const sub = document.querySelector("#panelEntry p.sub");
-    if (sub) sub.textContent = "١) نرخێ ڕۆژانە  ٢) جۆر (زیڤ یان سەعات)  ٣) گرام / عەدەد";
+    if (sub) sub.textContent = "گرام بنڤیسە — فرۆشتن و کڕین خۆکار ژ نرخێ ڕۆژانە. دوگمێ زێڕین = نرخێ ڕۆژ.";
     injectCard();
     mmJewReady = true;
 }
 
 export function mmJewelrySetRates(rates) {
-    if (rates) mmJewRates = normalizeRates(rates);
+    if (!rates) return;
+    const next = normalizeRates(rates);
+    try {
+        if (mmJewRates && JSON.stringify(normalizeRates(mmJewRates)) === JSON.stringify(next)) {
+            return;
+        }
+    } catch (eEq) {}
+    mmJewRates = next;
     if (mmJewReady) {
         fillRatesForm();
         fillKaratOptions();
         previewPrice();
+        updateFabChip();
     }
 }
 
@@ -394,14 +463,13 @@ export function mmJewelryCollect() {
     const karat = (el("mmJewKarat") && el("mmJewKarat").value) || (metal === "gold" ? "21" : "925");
     const weight = num(el("mmJewWeight") && el("mmJewWeight").value);
     const making = num(el("mmJewMaking") && el("mmJewMaking").value);
-    const mode = (el("mmJewPriceMode") && el("mmJewPriceMode").value) || "by_weight";
     return {
         jewelry_entry_kind: "metal",
         metal_type: metal,
         karat: karat,
         weight_grams: weight,
         making_charge: making,
-        jewelry_price_mode: mode === "fixed" ? "fixed" : "by_weight"
+        jewelry_price_mode: "by_weight"
     };
 }
 
@@ -415,9 +483,7 @@ export function mmJewelryFill(p) {
     if (el("mmJewKarat") && p.karat != null && p.karat !== "") el("mmJewKarat").value = String(p.karat);
     if (el("mmJewWeight")) el("mmJewWeight").value = Number(p.weight_grams) > 0 ? String(p.weight_grams) : "";
     if (el("mmJewMaking")) el("mmJewMaking").value = Number(p.making_charge) > 0 ? String(p.making_charge) : "";
-    if (el("mmJewPriceMode")) el("mmJewPriceMode").value = p.jewelry_price_mode === "fixed" ? "fixed" : "by_weight";
-    const priceEl = el("mmEntryPrice");
-    if (priceEl) priceEl.dataset.userPicked = "1";
+    if (el("mmJewPriceMode")) el("mmJewPriceMode").value = "by_weight";
     syncKindUi();
 }
 

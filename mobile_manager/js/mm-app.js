@@ -23,7 +23,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
-        const MM_JEWELRY_JS_V = "2.18.54";
+        const MM_JEWELRY_JS_V = "2.18.55";
         let mmJewelryMod = null;
         let mmShopIsJewelry = false;
         window.mmJewelryRates = null;
@@ -70,8 +70,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     }
                 } catch (eSave) {}
             }
-            if (!saved && activeChannelId && db) {
+            if (activeChannelId && db) {
                 try {
+                    await setDoc(doc(db, "pos_mobile_dashboard", activeChannelId), {
+                        jewelryRates: rates,
+                        systemMode: "jewelry"
+                    }, { merge: true });
                     const invRef = doc(db, "pos_mobile_inventory", activeChannelId);
                     const snap = await getDoc(invRef);
                     let queue = [];
