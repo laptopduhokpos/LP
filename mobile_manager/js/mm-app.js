@@ -23,7 +23,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
-        const MM_JEWELRY_JS_V = "2.18.52";
+        const MM_JEWELRY_JS_V = "2.18.54";
         let mmJewelryMod = null;
         let mmShopIsJewelry = false;
         window.mmJewelryRates = null;
@@ -48,6 +48,46 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 }
             } catch (eJew) {}
         }
+
+        document.addEventListener("mm-jewelry-save-rates", async function (ev) {
+            const rates = ev && ev.detail;
+            if (!rates) return;
+            window.mmJewelryRates = rates;
+            let saved = false;
+            const posBase = (typeof guessPosBase === "function") ? guessPosBase() : "";
+            if (posBase) {
+                try {
+                    const fd = new FormData();
+                    fd.append("action", "save_jewelry_rates");
+                    fd.append("rates", JSON.stringify(rates));
+                    const res = await fetch(posBase + "/mobile_entry.php", { method: "POST", body: fd });
+                    const json = await res.json();
+                    if (json && json.status === "success") {
+                        saved = true;
+                        if (json.jewelryRates && mmJewelryMod && typeof mmJewelryMod.mmJewelrySetRates === "function") {
+                            mmJewelryMod.mmJewelrySetRates(json.jewelryRates);
+                        }
+                    }
+                } catch (eSave) {}
+            }
+            if (!saved && activeChannelId && db) {
+                try {
+                    const invRef = doc(db, "pos_mobile_inventory", activeChannelId);
+                    const snap = await getDoc(invRef);
+                    let queue = [];
+                    if (snap.exists() && Array.isArray(snap.data().pending_items)) {
+                        queue = snap.data().pending_items.slice();
+                    }
+                    queue = queue.filter(function (x) { return !(x && x.mm_kind === "jewelry_rates"); });
+                    queue.push({ mm_kind: "jewelry_rates", rates: rates, added_at: Date.now() });
+                    if (snap.exists()) {
+                        await updateDoc(invRef, { pending_items: queue });
+                    } else {
+                        await setDoc(invRef, { pending_items: queue }, { merge: true });
+                    }
+                } catch (eFb) {}
+            }
+        });
 
         const firebaseConfig = window.POS_FIREBASE_CONFIG || {};
         if (!firebaseConfig.apiKey) {

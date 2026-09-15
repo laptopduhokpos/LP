@@ -1654,4 +1654,109 @@
             font-size: 0.8rem;
         }
 
+        /* Jewelry shop: laptop-like entry, no overlapping labels */
+        body.mm-jewelry-shop .entry-unit-toggle-wrap,
+        body.mm-jewelry-shop #mmCardPack,
+        body.mm-jewelry-shop #mmCardCarton {
+            display: none !important;
+        }
+        body.mm-jewelry-shop .unit-card-piece .unit-card-head {
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: flex-start;
+        }
+        body.mm-jewelry-shop .unit-card-piece .field-label {
+            display: block;
+            white-space: normal;
+            line-height: 1.35;
+            min-height: 2.1em;
+            overflow: visible;
+        }
+        body.mm-jewelry-shop .unit-card-piece input {
+            width: 100%;
+            min-width: 0;
+        }
+        body.mm-jewelry-shop .unit-card-piece .grid-2-col {
+            align-items: start;
+        }
+        .mm-jew-card {
+            margin-bottom: 14px;
+            padding: 12px;
+            border: 1px solid rgba(201,162,39,0.45);
+            border-radius: 14px;
+            background: rgba(201,162,39,0.08);
+        }
+        .mm-jew-card-title {
+            font-weight: 800;
+            font-size: 0.88rem;
+            color: #c9a227;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .mm-jew-help {
+            margin: 0 0 10px;
+            font-size: 0.75rem;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+        .mm-jew-sub {
+            font-weight: 800;
+            font-size: 0.78rem;
+            color: #94a3b8;
+            margin-bottom: 6px;
+        }
+        .mm-jew-rate-head,
+        .mm-jew-rate-row {
+            display: grid;
+            grid-template-columns: 64px 1fr 1fr;
+            gap: 6px;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .mm-jew-rate-head {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--muted);
+        }
+        .mm-jew-rate-k {
+            font-weight: 800;
+            font-size: 0.82rem;
+        }
+        .mm-jew-rate-row input {
+            width: 100%;
+            min-width: 0;
+            font-size: 0.9rem;
+        }
+        .mm-jew-grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .mm-jew-save-btn {
+            width: 100%;
+            margin-top: 10px;
+            border: 0;
+            border-radius: 12px;
+            padding: 12px 14px;
+            font-weight: 800;
+            font-size: 0.9rem;
+            background: #c9a227;
+            color: #1a1408;
+            cursor: pointer;
+        }
+        .mm-jew-msg {
+            margin: 8px 0 0;
+            min-height: 1.1em;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+        .mm-jew-preview {
+            margin: 0;
+            font-size: 0.75rem;
+            color: #c9a227;
+            line-height: 1.4;
+        }
+
 
