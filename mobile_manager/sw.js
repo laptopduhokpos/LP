@@ -2,7 +2,7 @@
  * PWA service worker — Mobile Manager (_PRIVATE/mobile_manager/)
  * CACHE_NAME must change on every release so installed PWAs fetch fresh shell.
  */
-const MM_SW_VERSION = "2.18.41";
+const MM_SW_VERSION = "2.18.51";
 const CACHE_NAME = "ld-manager-pwa-" + MM_SW_VERSION.replace(/\./g, "-");
 const SHELL = [
     "./index.html",
@@ -25,7 +25,9 @@ function mmIsAppPath(path) {
         path.indexOf("mobile_app_github") !== -1 ||
         path.indexOf("github_pages_LP") !== -1 ||
         /\/LP\/?$/i.test(path) ||
-        /\/LP\//i.test(path)
+        /\/LP\//i.test(path) ||
+        /\/LDAPP\/?$/i.test(path) ||
+        /\/LDAPP\//i.test(path)
     );
 }
 

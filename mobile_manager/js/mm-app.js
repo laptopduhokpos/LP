@@ -758,6 +758,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         let refreshToastTimer = null;
         const panelHome = document.getElementById("panelHome");
         const panelDash = document.getElementById("panelDash");
+        const panelEntry = document.getElementById("panelEntry");
         const panelInv = document.getElementById("panelInv");
         const panelDebt = document.getElementById("panelDebt");
         const panelBackup = document.getElementById("panelBackup");
@@ -765,6 +766,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         const bottomNav = document.getElementById("bottomNav");
         const tabHomeBtn = document.getElementById("tabHome");
         const tabDashBtn = document.getElementById("tabDash");
+        const tabEntryBtn = document.getElementById("tabEntry");
         const tabInvBtn = document.getElementById("tabInv");
         const tabDebtBtn = document.getElementById("tabDebt");
 
@@ -775,9 +777,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         function switchMobileTab(tab) {
-            let t = tab === "backup" ? "backup" : tab === "followup" ? "followup" : tab === "debt" ? "debt" : tab === "inv" ? "inv" : tab === "dash" ? "dash" : "home";
+            let t = tab === "backup" ? "backup" : tab === "followup" ? "followup" : tab === "debt" ? "debt" : tab === "inv" ? "inv" : tab === "dash" ? "dash" : tab === "entry" ? "entry" : "home";
             if (panelHome) panelHome.classList.toggle("hidden", t !== "home");
             if (panelDash) panelDash.classList.toggle("hidden", t !== "dash");
+            if (panelEntry) panelEntry.classList.toggle("hidden", t !== "entry");
             if (panelInv) panelInv.classList.toggle("hidden", t !== "inv");
             if (panelDebt) panelDebt.classList.toggle("hidden", t !== "debt");
             if (panelBackup) panelBackup.classList.toggle("hidden", t !== "backup");
@@ -785,8 +788,18 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (t === "backup" && activeChannelId) {
                 bindBackups(activeChannelId);
             }
+            if (t === "entry") {
+                if (typeof populateEntryCategories === "function") populateEntryCategories();
+                if (typeof populateEntryManufacturers === "function") populateEntryManufacturers();
+                if (typeof calcEntryTotalStock === "function") calcEntryTotalStock();
+                setTimeout(() => {
+                    const b = document.getElementById("mmEntryBarcode");
+                    if (b) b.focus();
+                }, 150);
+            }
             setTabActive(tabHomeBtn, t === "home" || t === "followup");
             setTabActive(tabDashBtn, t === "dash");
+            setTabActive(tabEntryBtn, t === "entry");
             setTabActive(tabInvBtn, t === "inv");
             setTabActive(tabDebtBtn, t === "debt");
             try { localStorage.setItem("pos_mobile_tab", t === "followup" ? "home" : t); } catch (e) {}
@@ -1615,6 +1628,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
             refreshDebtView();
             bindDebtFilters();
+            // Viewing debt is 100% free - zero token deduction
             if (activeChannelId && !opts.fromCache) {
                 mmSnapSaveDebounced(activeChannelId, "debt", data);
             }
@@ -2029,9 +2043,18 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (region) region.innerHTML = "";
         }
 
+        let invScannerTarget = "search"; // "search" or "entry"
+
         function applyInvScanResult(code) {
             const val = normalizeBarcodeSearchInput(code) || String(code || "").trim();
             if (!val) return;
+            closeInvScanner();
+            if (invScannerTarget && invScannerTarget.indexOf("entry") === 0) {
+                if (typeof applyEntryScanResult === "function") {
+                    applyEntryScanResult(val, invScannerTarget);
+                }
+                return;
+            }
             invSearchText = val;
             const list = filterInventoryProducts(invProductsCache, invSearchText, invCatFilter);
             if (list.length === 1) {
@@ -2041,7 +2064,6 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             } else {
                 invScanBannerText = "هیچ ئایتمێک نەدۆزرایەوە بۆ «" + val + "»";
             }
-            closeInvScanner();
             refreshInventoryView();
         }
 
@@ -2121,8 +2143,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (msg) msg.textContent = "بارکۆد لە ناو چوارگۆشەکەدا بگرە";
         }
 
-        async function openInvScanner() {
-            switchMobileTab("inv");
+        async function openInvScanner(target) {
+            invScannerTarget = target === "entry" ? "entry" : "search";
+            if (invScannerTarget === "search") {
+                switchMobileTab("inv");
+            }
             const modal = document.getElementById("invScannerModal");
             const msg = document.getElementById("invScannerMsg");
             if (!modal) return;
@@ -2144,6 +2169,940 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (modal) {
                 modal.classList.add("hidden");
                 modal.setAttribute("aria-hidden", "true");
+            }
+        }
+
+        /* --- Mobile Item Entry (ئیدخالا کاڵایان ب مۆبایلێ) --- */
+        let mmEntryLookupTimer = null;
+        let mmEntryMode = "add"; // "add" or "set"
+        let mmEntryRecent = [];
+
+        function playChime(success) {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                if (success) {
+                    osc.frequency.setValueAtTime(784, ctx.currentTime);
+                    osc.frequency.setValueAtTime(1046.5, ctx.currentTime + 0.08);
+                    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.25);
+                } else {
+                    osc.type = "sawtooth";
+                    osc.frequency.setValueAtTime(220, ctx.currentTime);
+                    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.2);
+                }
+            } catch(e) {}
+        }
+
+        function guessPosBase() {
+            try {
+                const stored = localStorage.getItem("pos_wifi_base_url");
+                if (stored) return stored.replace(/\/+$/, "");
+            } catch(e) {}
+            if (window.location.protocol === "http:" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+                return window.location.origin + "/pos";
+            }
+            if (window.location.pathname.indexOf("/pos") !== -1) {
+                return window.location.origin + "/pos";
+            }
+            return "";
+        }
+
+        let mmEntryShowPack = false;
+        let mmEntryShowCarton = false;
+        let mmEntryTrackStock = true;
+
+        async function populateEntryCategories() {
+            const datalist = document.getElementById("mmEntryCatList");
+            const selectEl = document.getElementById("mmEntryCatSelect");
+            if (!datalist && !selectEl) return;
+            const seen = {};
+            const cats = [];
+
+            // 1. From invCategoriesCache
+            if (Array.isArray(invCategoriesCache)) {
+                invCategoriesCache.forEach(c => {
+                    const s = String(c || "").trim();
+                    if (s && !seen[s]) {
+                        seen[s] = true;
+                        cats.push(s);
+                    }
+                });
+            }
+
+            // 2. From invProductsCache
+            if (Array.isArray(invProductsCache)) {
+                invProductsCache.forEach(p => {
+                    const c = String(p.category || "").trim();
+                    if (c && !seen[c]) {
+                        seen[c] = true;
+                        cats.push(c);
+                    }
+                });
+            }
+
+            // 3. From POS server via mobile_entry.php if available
+            const posBase = guessPosBase();
+            if (posBase) {
+                try {
+                    const res = await fetch(posBase + "/mobile_entry.php?ajax=1&action=get_meta");
+                    const json = await res.json();
+                    if (json && json.status === "success" && Array.isArray(json.categories)) {
+                        json.categories.forEach(c => {
+                            const s = String(c || "").trim();
+                            if (s && !seen[s]) {
+                                seen[s] = true;
+                                cats.push(s);
+                            }
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            cats.sort((a, b) => a.localeCompare(b, "ku", { sensitivity: "base" }));
+            if (datalist) {
+                datalist.innerHTML = cats.map(c => `<option value="${esc(c)}">`).join("");
+            }
+            if (selectEl) {
+                selectEl.innerHTML = `<option value="">▼</option>` + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+            }
+        }
+
+        async function populateEntryManufacturers() {
+            const datalist = document.getElementById("mmEntryMfrList");
+            const selectEl = document.getElementById("mmEntryMfrSelect");
+            if (!datalist && !selectEl) return;
+            const seen = {};
+            const mfrs = [];
+
+            if (Array.isArray(invProductsCache)) {
+                invProductsCache.forEach(p => {
+                    const m = String(p.manufacturer || "").trim();
+                    if (m && !seen[m]) {
+                        seen[m] = true;
+                        mfrs.push(m);
+                    }
+                });
+            }
+
+            const posBase = guessPosBase();
+            if (posBase) {
+                try {
+                    const res = await fetch(posBase + "/mobile_entry.php?ajax=1&action=get_meta");
+                    const json = await res.json();
+                    if (json && json.status === "success" && Array.isArray(json.manufacturers)) {
+                        json.manufacturers.forEach(m => {
+                            const s = String(m || "").trim();
+                            if (s && !seen[s]) {
+                                seen[s] = true;
+                                mfrs.push(s);
+                            }
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            mfrs.sort((a, b) => a.localeCompare(b, "ku", { sensitivity: "base" }));
+            if (datalist) {
+                datalist.innerHTML = mfrs.map(m => `<option value="${esc(m)}">`).join("");
+            }
+            if (selectEl) {
+                selectEl.innerHTML = `<option value="">▼</option>` + mfrs.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+            }
+        }
+
+        function toggleEntryPack(forcedState) {
+            mmEntryShowPack = (forcedState !== undefined) ? !!forcedState : !mmEntryShowPack;
+            const btn = document.getElementById("mmTogglePackBtn");
+            const card = document.getElementById("mmCardPack");
+            const convRow = document.getElementById("mmEntryConvRow");
+            const pppWrap = document.getElementById("mmConvPppWrap");
+
+            if (btn) {
+                btn.classList.toggle("active", mmEntryShowPack);
+                btn.setAttribute("aria-checked", mmEntryShowPack ? "true" : "false");
+                const stateSpan = btn.querySelector(".toggle-state");
+                if (stateSpan) stateSpan.textContent = mmEntryShowPack ? "هەیە" : "نینە";
+            }
+            if (card) {
+                card.classList.remove("hidden");
+                card.style.display = mmEntryShowPack ? "block" : "none";
+            }
+            if (convRow) {
+                const showConv = (mmEntryShowPack || mmEntryShowCarton);
+                convRow.classList.remove("hidden");
+                convRow.style.display = showConv ? "grid" : "none";
+            }
+            if (pppWrap) {
+                pppWrap.classList.remove("hidden");
+                pppWrap.style.display = mmEntryShowPack ? "block" : "none";
+            }
+            calcEntryTotalStock();
+        }
+
+        function toggleEntryCarton(forcedState) {
+            mmEntryShowCarton = (forcedState !== undefined) ? !!forcedState : !mmEntryShowCarton;
+            const btn = document.getElementById("mmToggleCartonBtn");
+            const card = document.getElementById("mmCardCarton");
+            const convRow = document.getElementById("mmEntryConvRow");
+            const ppcWrap = document.getElementById("mmConvPpcWrap");
+
+            if (btn) {
+                btn.classList.toggle("active", mmEntryShowCarton);
+                btn.setAttribute("aria-checked", mmEntryShowCarton ? "true" : "false");
+                const stateSpan = btn.querySelector(".toggle-state");
+                if (stateSpan) stateSpan.textContent = mmEntryShowCarton ? "هەیە" : "نینە";
+            }
+            if (card) {
+                card.classList.remove("hidden");
+                card.style.display = mmEntryShowCarton ? "block" : "none";
+            }
+            if (convRow) {
+                const showConv = (mmEntryShowPack || mmEntryShowCarton);
+                convRow.classList.remove("hidden");
+                convRow.style.display = showConv ? "grid" : "none";
+            }
+            if (ppcWrap) {
+                ppcWrap.classList.remove("hidden");
+                ppcWrap.style.display = mmEntryShowCarton ? "block" : "none";
+            }
+            calcEntryTotalStock();
+        }
+
+        function toggleEntryTrack(forcedState) {
+            mmEntryTrackStock = (forcedState !== undefined) ? !!forcedState : !mmEntryTrackStock;
+            const btn = document.getElementById("mmToggleTrackBtn");
+            if (btn) {
+                btn.classList.toggle("active", mmEntryTrackStock);
+                btn.setAttribute("aria-checked", mmEntryTrackStock ? "true" : "false");
+                const stateSpan = btn.querySelector(".toggle-state");
+                if (stateSpan) stateSpan.textContent = mmEntryTrackStock ? "هەیە" : "نینە";
+            }
+        }
+
+        function calcEntryTotalStock() {
+            const ppp = Math.max(1, parseInt(document.getElementById("mmEntryPiecesPerPack")?.value, 10) || 1);
+            const ppc = Math.max(1, parseInt(document.getElementById("mmEntryPacksPerCarton")?.value, 10) || 1);
+            const itemsPerPack = mmEntryShowPack ? ppp : 1;
+            const itemsPerCarton = mmEntryShowCarton ? (itemsPerPack * ppc) : 1;
+
+            const stockPiece = parseFloat(document.getElementById("mmEntryStockPiece")?.value) || 0;
+            const stockPack = mmEntryShowPack ? (parseFloat(document.getElementById("mmEntryStockPack")?.value) || 0) : 0;
+            const stockCarton = mmEntryShowCarton ? (parseFloat(document.getElementById("mmEntryStockCarton")?.value) || 0) : 0;
+
+            const total = (stockCarton * itemsPerCarton) + (stockPack * itemsPerPack) + stockPiece;
+
+            const badge = document.getElementById("mmEntryTotalStockBadge");
+            if (badge) badge.textContent = formatQty(total) + " دانە";
+
+            const preview = document.getElementById("mmConvTotalPreview");
+            if (preview) {
+                if (mmEntryShowCarton) {
+                    preview.textContent = "کۆی دانە ل کارتۆنێ دا: " + itemsPerCarton + " دانە";
+                } else if (mmEntryShowPack) {
+                    preview.textContent = "کۆی دانە ل پاکێتێ دا: " + itemsPerPack + " دانە";
+                } else {
+                    preview.textContent = "";
+                }
+            }
+
+            return { totalQty: total, ppp, ppc, itemsPerCarton, stockPiece, stockPack, stockCarton };
+        }
+
+        function autoGenerateBarcode() {
+            const code = "99" + Math.floor(1000000000 + Math.random() * 9000000000);
+            const barcodeInp = document.getElementById("mmEntryBarcode");
+            if (barcodeInp) {
+                barcodeInp.value = code;
+                lookupEntryBarcode(code);
+            }
+        }
+
+        function syncAllowNoName() {
+            const chk = document.getElementById("mmEntryAllowNoName");
+            const nameInp = document.getElementById("mmEntryName");
+            if (!nameInp) return;
+            if (chk && chk.checked) {
+                nameInp.required = false;
+                nameInp.placeholder = "خۆکار ژ بارکۆد و نرخ (بێ ناو)";
+            } else {
+                nameInp.required = true;
+                nameInp.placeholder = "ناڤێ بەرهەم بنڤیسە...";
+            }
+        }
+
+        function applyEntryScanResult(code, target) {
+            playChime(true);
+            if (navigator.vibrate) navigator.vibrate(80);
+            if (target === "entry_pack") {
+                const pInp = document.getElementById("mmEntryBarcodePack");
+                if (pInp) pInp.value = code;
+            } else if (target === "entry_carton") {
+                const cInp = document.getElementById("mmEntryBarcodeCarton");
+                if (cInp) cInp.value = code;
+            } else {
+                const barcodeInput = document.getElementById("mmEntryBarcode");
+                if (barcodeInput) {
+                    barcodeInput.value = code;
+                    lookupEntryBarcode(code);
+                }
+            }
+        }
+
+        function fillEntryFormFromProduct(found) {
+            if (!found) return;
+            const foundIdEl = document.getElementById("mmEntryFoundId");
+            const nameEl = document.getElementById("mmEntryName");
+            const catEl = document.getElementById("mmEntryCat");
+            const mfrEl = document.getElementById("mmEntryMfr");
+            const priceEl = document.getElementById("mmEntryPrice");
+            const costEl = document.getElementById("mmEntryCost");
+            const stockPieceEl = document.getElementById("mmEntryStockPiece");
+            const statusEl = document.getElementById("mmEntryBarcodeStatus");
+            const modeWrap = document.getElementById("mmEntryQtyModeWrap");
+
+            if (foundIdEl) foundIdEl.value = found.id || "0";
+            const costBadge = document.getElementById("entryTokenCostBadge");
+            if (costBadge) costBadge.innerHTML = '<i class="fas fa-coins"></i> ١ خاڵ (دەستکاری)';
+            if (nameEl) nameEl.value = found.name || "";
+            if (catEl) catEl.value = found.category || "";
+            if (mfrEl) mfrEl.value = found.manufacturer || "";
+            if (priceEl) priceEl.value = (found.price !== undefined && found.price !== null) ? found.price : "";
+            if (costEl) costEl.value = (found.cost !== undefined && found.cost !== null) ? found.cost : "";
+            if (stockPieceEl) stockPieceEl.value = "1";
+
+            // Piece wholesale price
+            const wpPieceEl = document.getElementById("mmEntryWholesalePricePiece");
+            const twPiece = (found.takeawayPrice !== undefined && found.takeawayPrice !== null && Number(found.takeawayPrice) > 0)
+                ? found.takeawayPrice
+                : ((found.wholesalePrice !== undefined && found.wholesalePrice !== null && Number(found.wholesalePrice) > 0) ? found.wholesalePrice : "");
+            if (wpPieceEl) wpPieceEl.value = twPiece;
+
+            // Pack fields
+            const hasPack = !!(found.unit_show_pack || found.barcode_pack || (found.price_pack && found.price_pack > 0));
+            toggleEntryPack(hasPack);
+            const bPackEl = document.getElementById("mmEntryBarcodePack");
+            const pPackEl = document.getElementById("mmEntryPricePack");
+            const wpPackEl = document.getElementById("mmEntryWholesalePricePack");
+            const cPackEl = document.getElementById("mmEntryCostPack");
+            const sPackEl = document.getElementById("mmEntryStockPack");
+            const pppEl = document.getElementById("mmEntryPiecesPerPack");
+            if (bPackEl) bPackEl.value = found.barcode_pack || "";
+            if (pPackEl) pPackEl.value = (found.price_pack !== undefined && found.price_pack !== null) ? found.price_pack : "";
+            if (wpPackEl) {
+                const twPack = (found.takeawayPrice_pack !== undefined && found.takeawayPrice_pack !== null && Number(found.takeawayPrice_pack) > 0) ? found.takeawayPrice_pack : "";
+                wpPackEl.value = twPack;
+            }
+            if (cPackEl) cPackEl.value = (found.cost_pack !== undefined && found.cost_pack !== null) ? found.cost_pack : "";
+            if (sPackEl) sPackEl.value = "0";
+            if (pppEl) pppEl.value = found.pieces_per_pack || 1;
+
+            // Carton fields
+            const hasCarton = !!(found.unit_show_carton || found.barcode_carton || (found.price_carton && found.price_carton > 0));
+            toggleEntryCarton(hasCarton);
+            const bCartonEl = document.getElementById("mmEntryBarcodeCarton");
+            const pCartonEl = document.getElementById("mmEntryPriceCarton");
+            const wpCartonEl = document.getElementById("mmEntryWholesalePriceCarton");
+            const cCartonEl = document.getElementById("mmEntryCostCarton");
+            const sCartonEl = document.getElementById("mmEntryStockCarton");
+            const ppcEl = document.getElementById("mmEntryPacksPerCarton");
+            if (bCartonEl) bCartonEl.value = found.barcode_carton || "";
+            if (pCartonEl) pCartonEl.value = (found.price_carton !== undefined && found.price_carton !== null) ? found.price_carton : "";
+            if (wpCartonEl) {
+                const twCarton = (found.takeawayPrice_carton !== undefined && found.takeawayPrice_carton !== null && Number(found.takeawayPrice_carton) > 0) ? found.takeawayPrice_carton : "";
+                wpCartonEl.value = twCarton;
+            }
+            if (cCartonEl) cCartonEl.value = (found.cost_carton !== undefined && found.cost_carton !== null) ? found.cost_carton : "";
+            if (sCartonEl) sCartonEl.value = "0";
+            if (ppcEl) ppcEl.value = found.packs_per_carton || 1;
+
+            // Advanced fields
+            const wqEl = document.getElementById("mmEntryWholesaleQty");
+            const wpEl = document.getElementById("mmEntryWholesalePrice");
+            const expEl = document.getElementById("mmEntryExpiry");
+            const minEl = document.getElementById("mmEntryMinStock");
+            const noteEl = document.getElementById("mmEntryNote");
+            const saleEl = document.getElementById("mmEntryForSale");
+            if (wqEl) wqEl.value = found.wholesaleQty || "";
+            if (wpEl) wpEl.value = twPiece;
+            if (expEl) expEl.value = found.expiry || "";
+            if (minEl) minEl.value = found.minStock || 5;
+            if (noteEl) noteEl.value = found.note || "";
+            if (saleEl) saleEl.checked = (found.forSale !== 0);
+
+            if (modeWrap) modeWrap.classList.remove("hidden");
+            setEntryQtyMode("add");
+
+            calcEntryTotalStock();
+
+            if (statusEl) {
+                statusEl.className = "barcode-status-box found";
+                statusEl.innerHTML = `<i class="fas fa-check-circle"></i> ئەم کاڵایە هەیە: <strong>${esc(found.name)}</strong> · عەدەدێ مەخزەنی: <strong>${formatQty(found.qty)}</strong>`;
+                statusEl.classList.remove("hidden");
+            }
+            playChime(true);
+        }
+
+        async function lookupEntryBarcode(code) {
+            const raw = String(code || "").trim();
+            if (!raw) {
+                resetEntryStatus();
+                return;
+            }
+            populateEntryCategories();
+            populateEntryManufacturers();
+
+            let found = null;
+            if (Array.isArray(invProductsCache)) {
+                found = invProductsCache.find(p => {
+                    return (p.barcode && String(p.barcode).trim() === raw) ||
+                           (p.barcode_pack && String(p.barcode_pack).trim() === raw) ||
+                           (p.barcode_carton && String(p.barcode_carton).trim() === raw) ||
+                           barcodeHaystackMatch(p.barcode, raw) ||
+                           normalizeBarcodeSearchInput(String(p.id)) === normalizeBarcodeSearchInput(raw);
+                });
+            }
+
+            if (found) {
+                fillEntryFormFromProduct(found);
+                return;
+            }
+
+            // If not found in cache, check server via mobile_entry.php if available
+            const posBase = guessPosBase();
+            if (posBase) {
+                try {
+                    const res = await fetch(posBase + "/mobile_entry.php?ajax=1&action=lookup_barcode&barcode=" + encodeURIComponent(raw));
+                    const json = await res.json();
+                    if (json && json.status === "success" && json.found && json.product) {
+                        fillEntryFormFromProduct(json.product);
+                        return;
+                    }
+                } catch(e) {}
+            }
+
+            // Not found anywhere -> new product
+            const foundIdEl = document.getElementById("mmEntryFoundId");
+            const statusEl = document.getElementById("mmEntryBarcodeStatus");
+            const modeWrap = document.getElementById("mmEntryQtyModeWrap");
+
+            if (foundIdEl) foundIdEl.value = "0";
+            if (modeWrap) modeWrap.classList.add("hidden");
+            setEntryQtyMode("add");
+
+            if (statusEl) {
+                statusEl.className = "barcode-status-box new";
+                statusEl.innerHTML = `<i class="fas fa-sparkles"></i> ✨ کاڵایەکی نوێیە — تکایە ناڤ و نرخ بنڤیسە`;
+                statusEl.classList.remove("hidden");
+            }
+            calcEntryTotalStock();
+        }
+
+        function resetEntryStatus() {
+            const statusEl = document.getElementById("mmEntryBarcodeStatus");
+            if (statusEl) {
+                statusEl.classList.add("hidden");
+                statusEl.innerHTML = "";
+            }
+            const modeWrap = document.getElementById("mmEntryQtyModeWrap");
+            if (modeWrap) modeWrap.classList.add("hidden");
+        }
+
+        function setEntryQtyMode(mode) {
+            mmEntryMode = mode === "set" ? "set" : "add";
+            const btnAdd = document.getElementById("mmBtnModeAdd");
+            const btnSet = document.getElementById("mmBtnModeSet");
+            if (btnAdd) btnAdd.classList.toggle("active", mmEntryMode === "add");
+            if (btnSet) btnSet.classList.toggle("active", mmEntryMode === "set");
+        }
+
+        function clearEntryForm() {
+            const bInp = document.getElementById("mmEntryBarcode");
+            const nInp = document.getElementById("mmEntryName");
+            const pInp = document.getElementById("mmEntryPrice");
+            const cInp = document.getElementById("mmEntryCost");
+            const sPiece = document.getElementById("mmEntryStockPiece");
+            const wpPiece = document.getElementById("mmEntryWholesalePricePiece");
+            const catInp = document.getElementById("mmEntryCat");
+            const mfrInp = document.getElementById("mmEntryMfr");
+            const fId = document.getElementById("mmEntryFoundId");
+
+            if (bInp) { bInp.value = ""; bInp.focus(); }
+            if (nInp) nInp.value = "";
+            if (pInp) pInp.value = "";
+            if (cInp) cInp.value = "";
+            if (sPiece) sPiece.value = "1";
+            if (wpPiece) wpPiece.value = "";
+            if (catInp) catInp.value = "";
+            if (mfrInp) mfrInp.value = "";
+            if (fId) fId.value = "0";
+            const costBadge = document.getElementById("entryTokenCostBadge");
+            if (costBadge) costBadge.innerHTML = '<i class="fas fa-coins"></i> ٢ خاڵ (ئیدخال)';
+
+            // Pack
+            const bPack = document.getElementById("mmEntryBarcodePack");
+            const pPack = document.getElementById("mmEntryPricePack");
+            const wpPack = document.getElementById("mmEntryWholesalePricePack");
+            const cPack = document.getElementById("mmEntryCostPack");
+            const sPack = document.getElementById("mmEntryStockPack");
+            const ppp = document.getElementById("mmEntryPiecesPerPack");
+            if (bPack) bPack.value = "";
+            if (pPack) pPack.value = "";
+            if (wpPack) wpPack.value = "";
+            if (cPack) cPack.value = "";
+            if (sPack) sPack.value = "0";
+            if (ppp) ppp.value = "1";
+
+            // Carton
+            const bCarton = document.getElementById("mmEntryBarcodeCarton");
+            const pCarton = document.getElementById("mmEntryPriceCarton");
+            const wpCarton = document.getElementById("mmEntryWholesalePriceCarton");
+            const cCarton = document.getElementById("mmEntryCostCarton");
+            const sCarton = document.getElementById("mmEntryStockCarton");
+            const ppc = document.getElementById("mmEntryPacksPerCarton");
+            if (bCarton) bCarton.value = "";
+            if (pCarton) pCarton.value = "";
+            if (wpCarton) wpCarton.value = "";
+            if (cCarton) cCarton.value = "";
+            if (sCarton) sCarton.value = "0";
+            if (ppc) ppc.value = "1";
+
+            // Advanced
+            const wq = document.getElementById("mmEntryWholesaleQty");
+            const wp = document.getElementById("mmEntryWholesalePrice");
+            const exp = document.getElementById("mmEntryExpiry");
+            const note = document.getElementById("mmEntryNote");
+            if (wq) wq.value = "";
+            if (wp) wp.value = "";
+            if (exp) exp.value = "";
+            if (note) note.value = "";
+
+            const noNameChk = document.getElementById("mmEntryAllowNoName");
+            if (noNameChk) { noNameChk.checked = false; syncAllowNoName(); }
+
+            toggleEntryPack(false);
+            toggleEntryCarton(false);
+            toggleEntryTrack(true);
+            resetEntryStatus();
+            calcEntryTotalStock();
+        }
+
+        function updateLocalCacheAfterEntry(item) {
+            if (!Array.isArray(invProductsCache)) invProductsCache = [];
+            const idx = invProductsCache.findIndex(p => {
+                if (item.id && p.id === item.id) return true;
+                if (item.barcode && p.barcode && String(p.barcode).trim() === String(item.barcode).trim()) return true;
+                return false;
+            });
+
+            if (idx >= 0) {
+                const p = invProductsCache[idx];
+                if (item.name) p.name = item.name;
+                if (item.barcode) p.barcode = item.barcode;
+                if (item.category) p.category = item.category;
+                if (item.manufacturer) p.manufacturer = item.manufacturer;
+                if (item.price !== undefined) p.price = item.price;
+                if (item.cost !== undefined) p.cost = item.cost;
+                if (item.unit_show_pack !== undefined) p.unit_show_pack = item.unit_show_pack;
+                if (item.unit_show_carton !== undefined) p.unit_show_carton = item.unit_show_carton;
+                if (item.barcode_pack) p.barcode_pack = item.barcode_pack;
+                if (item.barcode_carton) p.barcode_carton = item.barcode_carton;
+                if (item.price_pack !== undefined) p.price_pack = item.price_pack;
+                if (item.price_carton !== undefined) p.price_carton = item.price_carton;
+                if (item.cost_pack !== undefined) p.cost_pack = item.cost_pack;
+                if (item.cost_carton !== undefined) p.cost_carton = item.cost_carton;
+                if (item.takeawayPrice !== undefined) p.takeawayPrice = item.takeawayPrice;
+                if (item.takeawayPrice_pack !== undefined) p.takeawayPrice_pack = item.takeawayPrice_pack;
+                if (item.takeawayPrice_carton !== undefined) p.takeawayPrice_carton = item.takeawayPrice_carton;
+                if (item.wholesalePrice !== undefined) p.wholesalePrice = item.wholesalePrice;
+                if (item.pieces_per_pack) p.pieces_per_pack = item.pieces_per_pack;
+                if (item.packs_per_carton) p.packs_per_carton = item.packs_per_carton;
+                if (item.finalQty !== undefined) {
+                    p.qty = item.finalQty;
+                } else if (item.qty_mode === "set") {
+                    p.qty = item.qty;
+                } else {
+                    p.qty = (p.qty || 0) + item.qty;
+                }
+            } else {
+                invProductsCache.unshift({
+                    id: item.id || Date.now(),
+                    name: item.name,
+                    barcode: item.barcode,
+                    category: item.category,
+                    manufacturer: item.manufacturer,
+                    price: item.price,
+                    cost: item.cost,
+                    qty: item.qty,
+                    trackStock: item.trackStock !== undefined ? item.trackStock : 1,
+                    unit_show_pack: item.unit_show_pack,
+                    unit_show_carton: item.unit_show_carton,
+                    pieces_per_pack: item.pieces_per_pack,
+                    packs_per_carton: item.packs_per_carton,
+                    barcode_pack: item.barcode_pack,
+                    barcode_carton: item.barcode_carton,
+                    price_pack: item.price_pack,
+                    price_carton: item.price_carton,
+                    cost_pack: item.cost_pack,
+                    cost_carton: item.cost_carton,
+                    takeawayPrice: item.takeawayPrice || item.wholesalePrice || 0,
+                    takeawayPrice_pack: item.takeawayPrice_pack || 0,
+                    takeawayPrice_carton: item.takeawayPrice_carton || 0,
+                    wholesalePrice: item.wholesalePrice || 0
+                });
+            }
+            refreshInventoryView();
+        }
+
+        function addRecentEntryItem(item) {
+            mmEntryRecent.unshift(item);
+            if (mmEntryRecent.length > 30) mmEntryRecent.pop();
+
+            const cntEl = document.getElementById("mmEntryRecentCount");
+            if (cntEl) cntEl.textContent = mmEntryRecent.length + " کاڵا";
+
+            const listEl = document.getElementById("mmEntryRecentList");
+            if (!listEl) return;
+            listEl.innerHTML = mmEntryRecent.map(it => {
+                const qtyTxt = it.qty_mode === "set" ? ("عەدەد: " + it.qty) : ("+" + it.qty);
+                let extraUnits = "";
+                if (it.unit_show_pack && it.stock_pack) extraUnits += ` · ${it.stock_pack} پاکێت`;
+                if (it.unit_show_carton && it.stock_carton) extraUnits += ` · ${it.stock_carton} کارتۆن`;
+                let wsText = "";
+                if (it.takeawayPrice) wsText += ` · جوملە: ${formatMoney(it.takeawayPrice)}`;
+                return `
+                    <div class="entry-recent-item">
+                        <div class="entry-recent-info">
+                            <div class="entry-recent-name">${esc(it.name)}</div>
+                            <div class="entry-recent-meta">
+                                ${it.barcode ? `<span dir="ltr">#${esc(it.barcode)}</span> · ` : ""}
+                                ${it.category ? `<span>${esc(it.category)}</span> · ` : ""}
+                                <span>نرخ: ${formatMoney(it.price)}</span>
+                                ${wsText ? `<span style="color:#f59e0b">${wsText}</span>` : ""}
+                                ${extraUnits ? `<span style="color:#38bdf8">${extraUnits}</span>` : ""}
+                            </div>
+                        </div>
+                        <div class="entry-recent-badge">${qtyTxt}</div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function saveEntryProduct() {
+            const btn = document.getElementById("mmEntrySubmitBtn");
+            const barcode = (document.getElementById("mmEntryBarcode")?.value || "").trim();
+            const allowNoName = !!(document.getElementById("mmEntryAllowNoName")?.checked);
+            let name = (document.getElementById("mmEntryName")?.value || "").trim();
+            const cat = (document.getElementById("mmEntryCat")?.value || "").trim();
+            const mfr = (document.getElementById("mmEntryMfr")?.value || "").trim();
+
+            const price = parseFloat(document.getElementById("mmEntryPrice")?.value) || 0;
+            const cost = parseFloat(document.getElementById("mmEntryCost")?.value) || 0;
+
+            const stockCalc = calcEntryTotalStock();
+            const totalQty = stockCalc.totalQty;
+            const ppp = stockCalc.ppp;
+            const ppc = stockCalc.ppc;
+
+            const foundId = parseInt(document.getElementById("mmEntryFoundId")?.value, 10) || 0;
+
+            if (!name && allowNoName && barcode) {
+                name = barcode + (price > 0 ? (" · " + formatMoney(price)) : "");
+            } else if (!name && barcode) {
+                name = "کاڵا " + barcode;
+            }
+
+            if (!name) {
+                showRefreshToast("تکایە ناڤێ کاڵای بنڤیسە", true);
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                return;
+            }
+
+            // Pack & Carton specific data
+            const barcodePack = mmEntryShowPack ? (document.getElementById("mmEntryBarcodePack")?.value || "").trim() : "";
+            const pricePack = mmEntryShowPack ? (document.getElementById("mmEntryPricePack")?.value || "") : "";
+            const costPack = mmEntryShowPack ? (document.getElementById("mmEntryCostPack")?.value || "") : "";
+            const wpPack = mmEntryShowPack ? (document.getElementById("mmEntryWholesalePricePack")?.value || "") : "";
+
+            const barcodeCarton = mmEntryShowCarton ? (document.getElementById("mmEntryBarcodeCarton")?.value || "").trim() : "";
+            const priceCarton = mmEntryShowCarton ? (document.getElementById("mmEntryPriceCarton")?.value || "") : "";
+            const costCarton = mmEntryShowCarton ? (document.getElementById("mmEntryCostCarton")?.value || "") : "";
+            const wpCarton = mmEntryShowCarton ? (document.getElementById("mmEntryWholesalePriceCarton")?.value || "") : "";
+
+            // Wholesale prices (Piece, Pack, Carton)
+            const wholesalePricePiece = parseFloat(document.getElementById("mmEntryWholesalePricePiece")?.value) || parseFloat(document.getElementById("mmEntryWholesalePrice")?.value) || 0;
+            const wholesalePricePack = wpPack !== "" ? parseFloat(wpPack) : 0;
+            const wholesalePriceCarton = wpCarton !== "" ? parseFloat(wpCarton) : 0;
+
+            // Advanced data
+            const wholesaleQty = parseInt(document.getElementById("mmEntryWholesaleQty")?.value, 10) || 0;
+            const wholesalePrice = wholesalePricePiece;
+            const expiry = (document.getElementById("mmEntryExpiry")?.value || "").trim();
+            const minStock = parseInt(document.getElementById("mmEntryMinStock")?.value, 10) || 5;
+            const note = (document.getElementById("mmEntryNote")?.value || "").trim();
+            const forSale = document.getElementById("mmEntryForSale") ? (document.getElementById("mmEntryForSale").checked ? 1 : 0) : 1;
+
+            const isEdit = foundId > 0;
+            const tokenCost = isEdit ? 1 : 2;
+            const tokenCategory = isEdit ? "entry_edit" : "entry_add";
+            const actionLabel = isEdit ? "دەستکاری (Edit)" : "ئیدخالکرنا کاڵایێ نوێ (Add)";
+
+            if (!mmCanSpendTokens(tokenCost, actionLabel)) {
+                return;
+            }
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> چاوەڕێبە...';
+            }
+
+            const itemPayload = {
+                id: foundId,
+                barcode: barcode,
+                name: name,
+                category: cat,
+                manufacturer: mfr,
+                supplier: "Direct Store",
+                price: price,
+                cost: cost,
+                qty: totalQty,
+                stock_piece: stockCalc.stockPiece,
+                stock_pack: stockCalc.stockPack,
+                stock_carton: stockCalc.stockCarton,
+                qty_mode: mmEntryMode,
+                trackStock: mmEntryTrackStock ? 1 : 0,
+                unit_show_pack: mmEntryShowPack ? 1 : 0,
+                unit_show_carton: mmEntryShowCarton ? 1 : 0,
+                pieces_per_pack: ppp,
+                packs_per_carton: ppc,
+                barcode_pack: barcodePack,
+                barcode_carton: barcodeCarton,
+                price_pack: pricePack !== "" ? parseFloat(pricePack) : null,
+                cost_pack: costPack !== "" ? parseFloat(costPack) : null,
+                price_carton: priceCarton !== "" ? parseFloat(priceCarton) : null,
+                cost_carton: costCarton !== "" ? parseFloat(costCarton) : null,
+                takeawayPrice: wholesalePricePiece,
+                takeawayPrice_pack: wholesalePricePack,
+                takeawayPrice_carton: wholesalePriceCarton,
+                wholesaleQty: wholesaleQty,
+                wholesalePrice: wholesalePrice,
+                expiry: expiry,
+                minStock: minStock,
+                note: note,
+                forSale: forSale,
+                added_at: Date.now()
+            };
+
+            let savedLocally = false;
+            let savedCloud = false;
+
+            const posBase = guessPosBase();
+            if (posBase && window.location.protocol !== "https:") {
+                try {
+                    const fd = new FormData();
+                    fd.append("action", "save_product");
+                    fd.append("product_id", itemPayload.id);
+                    fd.append("barcode", itemPayload.barcode);
+                    fd.append("name", itemPayload.name);
+                    fd.append("price", itemPayload.price);
+                    fd.append("cost", itemPayload.cost);
+                    fd.append("qty", itemPayload.qty);
+                    fd.append("qty_mode", itemPayload.qty_mode);
+                    fd.append("category", itemPayload.category);
+                    fd.append("manufacturer", itemPayload.manufacturer);
+                    fd.append("supplier", itemPayload.supplier);
+                    fd.append("trackStock", itemPayload.trackStock);
+                    fd.append("unit_show_pack", itemPayload.unit_show_pack);
+                    fd.append("unit_show_carton", itemPayload.unit_show_carton);
+                    fd.append("pieces_per_pack", itemPayload.pieces_per_pack);
+                    fd.append("packs_per_carton", itemPayload.packs_per_carton);
+                    fd.append("barcode_pack", itemPayload.barcode_pack);
+                    fd.append("barcode_carton", itemPayload.barcode_carton);
+                    if (itemPayload.price_pack != null) fd.append("price_pack", itemPayload.price_pack);
+                    if (itemPayload.cost_pack != null) fd.append("cost_pack", itemPayload.cost_pack);
+                    if (itemPayload.price_carton != null) fd.append("price_carton", itemPayload.price_carton);
+                    if (itemPayload.cost_carton != null) fd.append("cost_carton", itemPayload.cost_carton);
+                    if (itemPayload.takeawayPrice) fd.append("takeawayPrice", itemPayload.takeawayPrice);
+                    if (itemPayload.takeawayPrice_pack) fd.append("takeawayPrice_pack", itemPayload.takeawayPrice_pack);
+                    if (itemPayload.takeawayPrice_carton) fd.append("takeawayPrice_carton", itemPayload.takeawayPrice_carton);
+                    if (itemPayload.wholesaleQty) fd.append("wholesaleQty", itemPayload.wholesaleQty);
+                    if (itemPayload.wholesalePrice) fd.append("wholesalePrice", itemPayload.wholesalePrice);
+                    if (itemPayload.expiry) fd.append("expiry", itemPayload.expiry);
+                    if (itemPayload.minStock) fd.append("minStock", itemPayload.minStock);
+                    if (itemPayload.note) fd.append("note", itemPayload.note);
+                    fd.append("forSale", itemPayload.forSale);
+
+                    const res = await fetch(posBase + "/mobile_entry.php", {
+                        method: "POST",
+                        body: fd
+                    });
+                    const json = await res.json();
+                    if (json && json.status === "success") {
+                        savedLocally = true;
+                        if (json.id) itemPayload.id = json.id;
+                        if (json.qty !== undefined) itemPayload.finalQty = json.qty;
+                    }
+                } catch(e) {}
+            }
+
+            if (activeChannelId && db) {
+                try {
+                    const invRef = doc(db, "pos_mobile_inventory", activeChannelId);
+                    const snap = await getDoc(invRef);
+                    let queue = [];
+                    if (snap.exists() && Array.isArray(snap.data()?.pending_items)) {
+                        queue = snap.data().pending_items;
+                    }
+                    if (!savedLocally) {
+                        queue.push(itemPayload);
+                        await updateDoc(invRef, { pending_items: queue });
+                        savedCloud = true;
+                    }
+                } catch(e) {
+                    console.warn("Cloud queue error:", e);
+                }
+            }
+
+            updateLocalCacheAfterEntry(itemPayload);
+            const tokenDetail = (itemPayload.name || "") + (itemPayload.barcode ? " (" + itemPayload.barcode + ")" : "");
+            mmDeductTokens(tokenCategory, tokenCost, actionLabel, tokenDetail);
+
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-save"></i> <span>تۆمارکرن د سیستەمی دا</span>';
+            }
+
+            playChime(true);
+            if (navigator.vibrate) navigator.vibrate([60, 40, 100]);
+
+            const syncMsg = savedLocally ? "تۆمارکرا ڕاستەوخۆ د سیستەمێ کاشێری دا" : (savedCloud ? "تۆمارکرا د کلاودێ دا (پەیوەست دکەت ب کاشێری)" : "تۆمارکرا ل مۆبایلێ");
+            showRefreshToast(syncMsg, false);
+
+            addRecentEntryItem(itemPayload);
+            clearEntryForm();
+        }
+
+        function initMobileEntry() {
+            populateEntryCategories();
+            populateEntryManufacturers();
+
+            const catSel = document.getElementById("mmEntryCatSelect");
+            if (catSel) {
+                catSel.addEventListener("change", () => {
+                    if (catSel.value) {
+                        const inEl = document.getElementById("mmEntryCat");
+                        if (inEl) inEl.value = catSel.value;
+                    }
+                });
+            }
+
+            const mfrSel = document.getElementById("mmEntryMfrSelect");
+            if (mfrSel) {
+                mfrSel.addEventListener("change", () => {
+                    if (mfrSel.value) {
+                        const inEl = document.getElementById("mmEntryMfr");
+                        if (inEl) inEl.value = mfrSel.value;
+                    }
+                });
+            }
+
+            const barcodeInput = document.getElementById("mmEntryBarcode");
+            if (barcodeInput) {
+                barcodeInput.addEventListener("input", () => {
+                    clearTimeout(mmEntryLookupTimer);
+                    const val = barcodeInput.value.trim();
+                    if (val.length >= 2) {
+                        mmEntryLookupTimer = setTimeout(() => {
+                            lookupEntryBarcode(val);
+                        }, 250);
+                    } else {
+                        resetEntryStatus();
+                    }
+                });
+            }
+
+            const scanBtn = document.getElementById("mmEntryScanBtn");
+            if (scanBtn) {
+                scanBtn.addEventListener("click", () => {
+                    openInvScanner("entry_piece");
+                });
+            }
+
+            const scanPackBtn = document.getElementById("mmEntryScanPackBtn");
+            if (scanPackBtn) {
+                scanPackBtn.addEventListener("click", () => {
+                    openInvScanner("entry_pack");
+                });
+            }
+
+            const scanCartonBtn = document.getElementById("mmEntryScanCartonBtn");
+            if (scanCartonBtn) {
+                scanCartonBtn.addEventListener("click", () => {
+                    openInvScanner("entry_carton");
+                });
+            }
+
+            const autoBtn = document.getElementById("mmEntryAutoBarcodeBtn");
+            if (autoBtn) {
+                autoBtn.addEventListener("click", () => {
+                    autoGenerateBarcode();
+                });
+            }
+
+            const noNameChk = document.getElementById("mmEntryAllowNoName");
+            if (noNameChk) {
+                noNameChk.addEventListener("change", syncAllowNoName);
+            }
+
+            const togglePackBtn = document.getElementById("mmTogglePackBtn");
+            if (togglePackBtn) {
+                togglePackBtn.addEventListener("click", () => toggleEntryPack());
+            }
+
+            const toggleCartonBtn = document.getElementById("mmToggleCartonBtn");
+            if (toggleCartonBtn) {
+                toggleCartonBtn.addEventListener("click", () => toggleEntryCarton());
+            }
+
+            const toggleTrackBtn = document.getElementById("mmToggleTrackBtn");
+            if (toggleTrackBtn) {
+                toggleTrackBtn.addEventListener("click", () => toggleEntryTrack());
+            }
+
+            const wpPieceInp = document.getElementById("mmEntryWholesalePricePiece");
+            const wpDetailsInp = document.getElementById("mmEntryWholesalePrice");
+            if (wpPieceInp && wpDetailsInp) {
+                wpPieceInp.addEventListener("input", () => { wpDetailsInp.value = wpPieceInp.value; });
+                wpDetailsInp.addEventListener("input", () => { wpPieceInp.value = wpDetailsInp.value; });
+            }
+
+            ["mmEntryPiecesPerPack", "mmEntryPacksPerCarton", "mmEntryStockPiece", "mmEntryStockPack", "mmEntryStockCarton"].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener("input", calcEntryTotalStock);
+            });
+
+            const btnAdd = document.getElementById("mmBtnModeAdd");
+            const btnSet = document.getElementById("mmBtnModeSet");
+            if (btnAdd) btnAdd.addEventListener("click", () => setEntryQtyMode("add"));
+            if (btnSet) btnSet.addEventListener("click", () => setEntryQtyMode("set"));
+
+            const resetBtn = document.getElementById("mmEntryResetBtn");
+            if (resetBtn) resetBtn.addEventListener("click", clearEntryForm);
+
+            const form = document.getElementById("mmEntryForm");
+            if (form) {
+                form.addEventListener("submit", (e) => {
+                    e.preventDefault();
+                    saveEntryProduct();
+                });
             }
         }
 
@@ -2390,6 +3349,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             refreshInventoryView();
             bindInventoryFilters();
             bindInvSubTabs();
+            // Viewing inventory is 100% free - zero token deduction
+            if (typeof populateEntryCategories === "function") populateEntryCategories();
+            if (typeof populateEntryManufacturers === "function") populateEntryManufacturers();
             if (data.debtSnapshot && (data.debtSnapshot.summary || data.debtSnapshot.companies || data.debtSnapshot.customers)) {
                 applyDebtData(data.debtSnapshot, { silent: true, fromCache: opts.fromCache, savedAt: opts.savedAt });
             }
@@ -2432,6 +3394,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const priv = mmPrivacyFromDoc(data);
             setMobileAmountMeta(data);
             const sales = priv.hideSalesDetail ? [] : (Array.isArray(data.sales) ? data.sales : []);
+            // NEVER deduct tokens during refresh, pull-to-refresh, or from cache
+            if (!opts.fromCache && !opts.isRefresh && !refreshBusy && Array.isArray(data.sales) && data.sales.length > 0) {
+                mmHandleDailySalesTokenDeduction(data, dayKey);
+            }
             const ret = Array.isArray(data.returns) ? data.returns : [];
             const exp = Array.isArray(data.expenses) ? data.expenses : [];
             const purchases = Array.isArray(data.purchases) ? data.purchases : [];
@@ -2560,10 +3526,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     readDoc(doc(db, "pos_mobile_debt", activeChannelId)),
                     readDoc(doc(db, "pos_mobile_daily_detail", activeChannelId, "days", dayKey))
                 ]);
-                applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true });
-                applyInventoryData(snaps[1].exists() ? snaps[1].data() : null, { silent: true });
-                applyDebtData(snaps[2].exists() ? snaps[2].data() : null, { silent: true });
-                applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey, { silent: true });
+                applyDashboardData(snaps[0].exists() ? snaps[0].data() : null, { silent: true, isRefresh: true });
+                applyInventoryData(snaps[1].exists() ? snaps[1].data() : null, { silent: true, isRefresh: true });
+                applyDebtData(snaps[2].exists() ? snaps[2].data() : null, { silent: true, isRefresh: true });
+                applyDetailData(snaps[3].exists() ? snaps[3].data() : null, dayKey, { silent: true, isRefresh: true });
                 if (opts.forceServer) await mmRefreshAllHubs();
                 mmUpdateConnectionStatus({ live: true });
                 if (!opts.silent) showRefreshToast("داتا نوێکرایەوە ✓", false);
@@ -2713,6 +3679,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             }
         }
 
+        window.doLogin = doLogin;
+
         const themeBtn = document.getElementById("themeToggleBtn");
         const themeIcon = document.getElementById("themeIcon");
         function updateThemeIcon() {
@@ -2721,19 +3689,41 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             themeIcon.style.color = isLight ? "#2563eb" : "#fbbf24";
         }
         updateThemeIcon();
-        themeBtn.addEventListener("click", () => {
-            const newTheme = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
-            if (newTheme === "light") document.documentElement.setAttribute("data-theme", "light");
-            else document.documentElement.removeAttribute("data-theme");
-            localStorage.setItem("pos_mobile_theme", newTheme);
-            updateThemeIcon();
-        });
+        if (themeBtn) {
+            themeBtn.addEventListener("click", () => {
+                const newTheme = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+                if (newTheme === "light") document.documentElement.setAttribute("data-theme", "light");
+                else document.documentElement.removeAttribute("data-theme");
+                localStorage.setItem("pos_mobile_theme", newTheme);
+                updateThemeIcon();
+            });
+        }
 
-        document.getElementById("authForm").addEventListener("submit", (ev) => { ev.preventDefault(); doLogin(); });
+        const authForm = document.getElementById("authForm");
+        if (authForm) {
+            authForm.addEventListener("submit", (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                doLogin();
+                return false;
+            });
+        }
+        const loginBtn = document.getElementById("loginBtn");
+        if (loginBtn) {
+            loginBtn.addEventListener("click", (ev) => {
+                ev.preventDefault();
+                doLogin();
+            });
+        }
         if (tabHomeBtn) tabHomeBtn.addEventListener("click", () => switchMobileTab("home"));
         if (tabDashBtn) tabDashBtn.addEventListener("click", () => switchMobileTab("dash"));
+        if (tabEntryBtn) tabEntryBtn.addEventListener("click", () => switchMobileTab("entry"));
         if (tabInvBtn) tabInvBtn.addEventListener("click", () => switchMobileTab("inv"));
         if (tabDebtBtn) tabDebtBtn.addEventListener("click", () => switchMobileTab("debt"));
+        const homeGoEntry = document.getElementById("homeGoEntry");
+        if (homeGoEntry) homeGoEntry.addEventListener("click", () => switchMobileTab("entry"));
+        const invOpenEntryBtn = document.getElementById("invOpenEntryBtn");
+        if (invOpenEntryBtn) invOpenEntryBtn.addEventListener("click", () => switchMobileTab("entry"));
         const homeGoDash = document.getElementById("homeGoDash");
         const homeGoInv = document.getElementById("homeGoInv");
         const homeGoDebt = document.getElementById("homeGoDebt");
@@ -2788,6 +3778,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 if (e.target === invScannerModal) closeInvScanner();
             });
         }
+        if (typeof initMobileEntry === "function") initMobileEntry();
 
         let deferredInstallPrompt = null;
         const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
@@ -2955,6 +3946,565 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
         mmRegisterServiceWorker();
 
+        /* =========================================================
+           MOBILE MANAGER TOKEN ENGINE (وەکی ئەی ئای)
+           ========================================================= */
+        const MM_TOKEN_SALT = "LD_MM_2026_";
+        let mmTokenState = null;
+
+        function mmGetTokenStorageKey(channelId) {
+            return "pos_mm_tokens_" + (channelId || activeChannelId || "default").toLowerCase();
+        }
+
+        function mmFormatTokenTime(ts) {
+            if (!ts) return "";
+            const d = new Date(ts);
+            const now = new Date();
+            const isToday = d.toDateString() === now.toDateString();
+            const hours = String(d.getHours()).padStart(2, "0");
+            const mins = String(d.getMinutes()).padStart(2, "0");
+            const timeOnly = `${hours}:${mins}`;
+            if (isToday) return `ئەمڕۆ ${timeOnly}`;
+            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            if (d.toDateString() === yesterday.toDateString()) return `دوێنێ ${timeOnly}`;
+            const month = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${day}/${month} ${timeOnly}`;
+        }
+
+        function mmLoadTokenState(channelId) {
+            const k = mmGetTokenStorageKey(channelId);
+            let state = null;
+            try {
+                const s = localStorage.getItem(k);
+                if (s) state = JSON.parse(s);
+            } catch (e) {}
+
+            const now = Date.now();
+            const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+            if (!state || typeof state !== "object" || state.schemaVer !== 4) {
+                const redeemed = (state && Array.isArray(state.redeemedCodes)) ? state.redeemedCodes : [];
+                const bonus = (state && typeof state.bonusLimit === "number") ? state.bonusLimit : 0;
+                state = {
+                    schemaVer: 4,
+                    tier: "basic",
+                    baseLimit: 300,
+                    bonusLimit: bonus,
+                    used: 0,
+                    periodStart: now,
+                    resetsOn: now + thirtyDaysMs,
+                    redeemedCodes: redeemed,
+                    chargedSalesDates: {},
+                    breakdown: {
+                        entry_add: 0,
+                        entry_edit: 0,
+                        sales: 0,
+                        debt: 0,
+                        inv: 0
+                    },
+                    history: [{
+                        time: now,
+                        type: "plus",
+                        cost: 300,
+                        category: "reward",
+                        title: "دیاریا مانگانە (۳۰۰ خاڵ)",
+                        meta: "۳۰۰ خاڵی دیاری بۆ ۳۰ ڕۆژان — ڕیفرێش و بینین ١٠٠٪ خۆڕاییە"
+                    }]
+                };
+                mmSaveTokenState(state, channelId);
+            } else {
+                if (typeof state.baseLimit !== "number" || state.baseLimit < 300) state.baseLimit = 300;
+                if (typeof state.bonusLimit !== "number") state.bonusLimit = 0;
+                if (typeof state.used !== "number") state.used = 0;
+                if (!Array.isArray(state.redeemedCodes)) state.redeemedCodes = [];
+                if (!state.chargedSalesDates || typeof state.chargedSalesDates !== "object") state.chargedSalesDates = {};
+                if (!state.resetsOn || typeof state.resetsOn !== "number") {
+                    state.periodStart = now;
+                    state.resetsOn = now + thirtyDaysMs;
+                }
+                if (!state.breakdown || typeof state.breakdown !== "object") {
+                    state.breakdown = { entry_add: 0, entry_edit: 0, sales: 0, debt: 0, inv: 0 };
+                }
+                if (!Array.isArray(state.history)) {
+                    state.history = [];
+                }
+            }
+
+            // Monthly Auto-Renewal Gift (وەکی ئەی ئای)
+            if (now >= state.resetsOn) {
+                state.periodStart = now;
+                state.resetsOn = now + thirtyDaysMs;
+                state.used = 0;
+                state.chargedSalesDates = {};
+                state.breakdown = { entry_add: 0, entry_edit: 0, sales: 0, debt: 0, inv: 0 };
+                if (!Array.isArray(state.history)) state.history = [];
+                state.history.unshift({
+                    time: now,
+                    type: "plus",
+                    cost: state.baseLimit || 300,
+                    category: "reward",
+                    title: "دیاریا مانگانە (Monthly Gift)",
+                    meta: `${state.baseLimit || 300} خاڵی خۆڕایی بۆ ۳۰ ڕۆژی نوێ`
+                });
+                mmSaveTokenState(state, channelId);
+                setTimeout(() => {
+                    showRefreshToast(`🎉 پیرۆزە! ${state.baseLimit || 300} خاڵی دیاریا مانگانە نوێ بووەوە!`, false);
+                    playChime(true);
+                }, 1000);
+            }
+
+            return state;
+        }
+
+        function mmSaveTokenState(state, channelId) {
+            mmTokenState = state;
+            const k = mmGetTokenStorageKey(channelId || activeChannelId);
+            try {
+                localStorage.setItem(k, JSON.stringify(state));
+            } catch (e) {}
+        }
+
+        function mmGetTokensRemaining(state) {
+            const st = state || mmTokenState || mmLoadTokenState();
+            const total = (st.baseLimit || 150) + (st.bonusLimit || 0);
+            return Math.max(0, total - (st.used || 0));
+        }
+
+        function mmUpdateTokenUI() {
+            const st = mmTokenState || mmLoadTokenState();
+            const total = (st.baseLimit || 150) + (st.bonusLimit || 0);
+            const used = Math.min(total, st.used || 0);
+            const remaining = Math.max(0, total - used);
+            const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+
+            const scoreEl = document.getElementById("mmTokenScoreText");
+            if (scoreEl) scoreEl.textContent = `${used} / ${total}`;
+
+            const topChip = document.getElementById("topbarTokenChip");
+            const topVal = document.getElementById("topbarTokenVal");
+            if (topVal) topVal.textContent = remaining;
+            if (topChip && activeChannelId) topChip.classList.remove("hidden");
+
+            const barEl = document.getElementById("mmTokenBarFill");
+            if (barEl) {
+                barEl.style.width = pct + "%";
+                if (remaining <= 10) barEl.classList.add("warning");
+                else barEl.classList.remove("warning");
+            }
+
+            const planBadge = document.getElementById("mmTokenPlanBadge");
+            if (planBadge) {
+                const planName = st.tier === "pro" ? "Pro · 600/30 ڕۆژ" : "Basic · 300/30 ڕۆژ";
+                planBadge.textContent = planName;
+            }
+
+            const resetHint = document.getElementById("mmTokenResetHint");
+            if (resetHint && st.resetsOn) {
+                const d = new Date(st.resetsOn);
+                const dayStr = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
+                resetHint.textContent = `نوێدەبێتەوە ${dayStr} · 30 ڕۆژ`;
+            }
+
+            const remHint = document.getElementById("mmTokenRemainingHint");
+            if (remHint) {
+                remHint.textContent = `${remaining} ماوە`;
+                remHint.style.color = remaining <= 10 ? "#ef4444" : "#38bdf8";
+            }
+
+            // 1. Render Analytics Breakdown (% چەند ژ ١٠٠ ل کیڤە چوونە)
+            const totalUsedEl = document.getElementById("mmAnalyticsTotalUsed");
+            if (totalUsedEl) totalUsedEl.textContent = `کۆی مەسرەفبوو: ${used} خاڵ`;
+
+            const breakdownListEl = document.getElementById("mmCatBreakdownList");
+            if (breakdownListEl) {
+                if (used <= 0) {
+                    breakdownListEl.innerHTML = `
+                        <div class="detail-empty" style="padding:14px 6px;text-align:center;color:var(--muted);font-size:0.8rem;">
+                            <i class="fas fa-sparkles" style="color:#10b981;display:block;font-size:1.4rem;margin-bottom:6px;"></i>
+                            هێشتا هیچ خاڵێک مەسرەف نەکراوە (٠%) — هەموو <strong>${total}</strong> خاڵ ماون!
+                        </div>
+                    `;
+                } else {
+                    const catConfigs = [
+                        { key: "entry_add", label: "ئیدخالکرنا کاڵایێ نوێ (Add Item)", icon: '<i class="fas fa-plus-circle" style="color:#10b981;"></i>', cls: "entry-add" },
+                        { key: "entry_edit", label: "دەستکاریکرنا کاڵایان (Edit Item)", icon: '<i class="fas fa-pen-to-square" style="color:#0ea5e9;"></i>', cls: "entry-edit" },
+                        { key: "sales", label: "داتایێن فرۆتنێ (Daily Sales Sync)", icon: '<i class="fas fa-chart-line" style="color:#f59e0b;"></i>', cls: "sales" },
+                        { key: "debt", label: "قەرز و حسابات (Debt Sync)", icon: '<i class="fas fa-scale-balanced" style="color:#ef4444;"></i>', cls: "debt" },
+                        { key: "inv", label: "کۆگەهـ و مەخزەن (Warehouse Sync)", icon: '<i class="fas fa-boxes-stacked" style="color:#a855f7;"></i>', cls: "inv" }
+                    ];
+
+                    const bd = st.breakdown || {};
+                    breakdownListEl.innerHTML = catConfigs.map(cat => {
+                        const pts = bd[cat.key] || 0;
+                        const pctOfUsed = used > 0 ? Math.round((pts / used) * 100) : 0;
+                        return `
+                            <div class="mm-cat-item">
+                                <div class="mm-cat-header">
+                                    <span class="mm-cat-label">${cat.icon} <span>${cat.label}</span></span>
+                                    <div class="mm-cat-meta">
+                                        <span class="mm-cat-pts">${pts} خاڵ</span>
+                                        <span class="mm-cat-pct-badge pct-${cat.cls}">${pctOfUsed}%</span>
+                                    </div>
+                                </div>
+                                <div class="mm-cat-bar">
+                                    <div class="mm-cat-bar-fill bar-${cat.cls}" style="width: ${pctOfUsed}%;"></div>
+                                </div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+            }
+
+            // 2. Render Transaction History Log
+            const historyBadge = document.getElementById("mmHistoryCountBadge");
+            const historyListEl = document.getElementById("mmTokenHistoryList");
+            const hist = Array.isArray(st.history) ? st.history : [];
+            if (historyBadge) historyBadge.textContent = `${hist.length} کردار`;
+            if (historyListEl) {
+                if (!hist.length) {
+                    historyListEl.innerHTML = `<div class="mm-history-empty"><i class="fas fa-circle-check" style="color:#10b981;font-size:1.5rem;margin-bottom:6px;display:block;"></i> هێشتا هیچ کردارەک ئەنجام نەدایە</div>`;
+                } else {
+                    historyListEl.innerHTML = hist.map(item => {
+                        const isPlus = item.type === "plus";
+                        const sign = isPlus ? "+" : "−";
+                        const costCls = isPlus ? "plus" : "minus";
+                        const timeFormatted = mmFormatTokenTime(item.time);
+                        let iconHtml = '<i class="fas fa-coins" style="color:#fbbf24;"></i>';
+                        if (item.category === "entry_add") iconHtml = '<i class="fas fa-plus-circle" style="color:#10b981;"></i>';
+                        else if (item.category === "entry_edit") iconHtml = '<i class="fas fa-pen-to-square" style="color:#0ea5e9;"></i>';
+                        else if (item.category === "sales") iconHtml = '<i class="fas fa-chart-line" style="color:#f59e0b;"></i>';
+                        else if (item.category === "debt") iconHtml = '<i class="fas fa-scale-balanced" style="color:#ef4444;"></i>';
+                        else if (item.category === "inv") iconHtml = '<i class="fas fa-boxes-stacked" style="color:#a855f7;"></i>';
+                        else if (item.category === "reward") iconHtml = '<i class="fas fa-gift" style="color:#10b981;"></i>';
+                        else if (item.category === "redeem") iconHtml = '<i class="fas fa-key" style="color:#a855f7;"></i>';
+
+                        return `
+                            <div class="mm-history-item">
+                                <div style="font-size:1.1rem;display:flex;align-items:center;min-width:24px;">${iconHtml}</div>
+                                <div class="mm-history-info">
+                                    <div class="mm-history-title">${esc(item.title || "کردار")}</div>
+                                    <div class="mm-history-meta">
+                                        <span><i class="far fa-clock"></i> ${timeFormatted}</span>
+                                        ${item.meta ? `<span>· ${esc(item.meta)}</span>` : ""}
+                                    </div>
+                                </div>
+                                <div class="mm-history-cost ${costCls}">${sign}${item.cost} خاڵ</div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+            }
+        }
+
+        function mmCanSpendTokens(cost, actionName) {
+            const st = mmTokenState || mmLoadTokenState();
+            const remaining = mmGetTokensRemaining(st);
+            if (remaining < cost) {
+                mmShowTokenExhaustedModal(cost, remaining, actionName);
+                return false;
+            }
+            return true;
+        }
+
+        function mmDeductTokens(category, cost, actionName, metaDetail, silentToast = false) {
+            if (typeof category === "number") {
+                metaDetail = actionName;
+                actionName = cost;
+                cost = category;
+                category = "entry_add";
+            }
+            const st = mmTokenState || mmLoadTokenState();
+            st.used = (st.used || 0) + cost;
+
+            if (!st.breakdown || typeof st.breakdown !== "object") {
+                st.breakdown = { entry_add: 0, entry_edit: 0, sales: 0, debt: 0, inv: 0 };
+            }
+            st.breakdown[category] = (st.breakdown[category] || 0) + cost;
+
+            if (!Array.isArray(st.history)) st.history = [];
+            st.history.unshift({
+                time: Date.now(),
+                type: "minus",
+                cost: cost,
+                category: category,
+                title: actionName || "کردار",
+                meta: metaDetail || ""
+            });
+            if (st.history.length > 60) st.history.length = 60;
+
+            mmSaveTokenState(st);
+            mmUpdateTokenUI();
+            if (!silentToast) {
+                showRefreshToast(`−${cost} خاڵ مەسرەف بوو (${actionName || ""})`, false);
+            }
+        }
+
+        function mmShowTokenExhaustedModal(cost, remaining, actionName) {
+            const modal = document.getElementById("mmTokenModal");
+            const desc = document.getElementById("mmTokenModalDesc");
+            if (desc) {
+                desc.innerHTML = `سنوورا خاڵێن تە ل سەر مۆبایلێ تەواو بوو (تەنها <strong>${remaining}</strong> خاڵ ماون).<br>کرداری «<strong>${actionName || "مۆبایل"}</strong>» پێویستی ب <strong>${cost}</strong> خاڵ هەیە.`;
+            }
+            if (modal) modal.classList.remove("hidden");
+            if (navigator.vibrate) navigator.vibrate([100, 80, 100]);
+        }
+
+        function mmCloseTokenModal() {
+            const modal = document.getElementById("mmTokenModal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function mmVerifyCodeOffline(codeStr) {
+            const clean = String(codeStr || "").trim().toUpperCase();
+            const parts = clean.split("-");
+            if (parts.length === 4 && parts[0] === "MM") {
+                const total = parseInt(parts[1], 10);
+                const rand = parts[2];
+                const check = parts[3];
+                if (total > 0 && rand && check) {
+                    const salt = MM_TOKEN_SALT + total + "_" + rand;
+                    let hash = 0;
+                    for (let i = 0; i < salt.length; i++) {
+                        hash = ((hash << 5) - hash) + salt.charCodeAt(i);
+                        hash |= 0;
+                    }
+                    const expected = Math.abs(hash).toString(36).toUpperCase().padStart(4, "X").slice(0, 4);
+                    if (check === expected) {
+                        return { valid: true, points: total };
+                    }
+                }
+            }
+            if (/^AI[A-Z0-9]{10}$/.test(clean)) {
+                return { valid: true, points: 170 };
+            }
+            return { valid: false };
+        }
+
+        async function mmRedeemTokenCode(codeRaw, isModal = false) {
+            const code = String(codeRaw || "").trim().toUpperCase();
+            const msgEl = document.getElementById(isModal ? "mmTokenModalMsg" : "mmTokenRedeemMsg");
+            if (!code) {
+                if (msgEl) {
+                    msgEl.className = "mm-token-redeem-msg error";
+                    msgEl.textContent = "تکایە کۆدی چالاککردن بنووسە.";
+                    msgEl.style.display = "block";
+                }
+                return;
+            }
+
+            const st = mmTokenState || mmLoadTokenState();
+            if (st.redeemedCodes && st.redeemedCodes.includes(code)) {
+                if (msgEl) {
+                    msgEl.className = "mm-token-redeem-msg error";
+                    msgEl.textContent = "ئەم کۆدە پێشتر بەکارهاتووە.";
+                    msgEl.style.display = "block";
+                }
+                return;
+            }
+
+            let pointsAdded = 0;
+            const posBase = guessPosBase();
+            if (posBase && window.location.protocol !== "https:") {
+                try {
+                    const fd = new FormData();
+                    fd.append("action", "redeem_token_code");
+                    fd.append("code", code);
+                    fd.append("email", activeChannelId || "");
+                    const res = await fetch(posBase + "/mobile_entry.php", { method: "POST", body: fd });
+                    const json = await res.json();
+                    if (json && json.status === "success" && json.points) {
+                        pointsAdded = parseInt(json.points, 10);
+                    }
+                } catch (e) {}
+            }
+
+            if (!pointsAdded) {
+                const offCheck = mmVerifyCodeOffline(code);
+                if (offCheck.valid && offCheck.points) {
+                    pointsAdded = offCheck.points;
+                }
+            }
+
+            if (!pointsAdded) {
+                if (msgEl) {
+                    msgEl.className = "mm-token-redeem-msg error";
+                    msgEl.textContent = "کۆد هەڵەیە یان نەناسراوە. تکایە دڵنیابە لە کۆدەکەت.";
+                    msgEl.style.display = "block";
+                }
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                return;
+            }
+
+            st.bonusLimit = (st.bonusLimit || 0) + pointsAdded;
+            if (!st.redeemedCodes) st.redeemedCodes = [];
+            st.redeemedCodes.push(code);
+
+            if (!Array.isArray(st.history)) st.history = [];
+            st.history.unshift({
+                time: Date.now(),
+                type: "plus",
+                cost: pointsAdded,
+                category: "redeem",
+                title: "کۆدی خاڵان",
+                meta: `کۆد: ${code} (+${pointsAdded} خاڵ)`
+            });
+            if (st.history.length > 60) st.history.length = 60;
+
+            mmSaveTokenState(st);
+            mmUpdateTokenUI();
+
+            if (msgEl) {
+                msgEl.className = "mm-token-redeem-msg success";
+                msgEl.textContent = `🎉 پیرۆزە! +${pointsAdded} خاڵ بە سەرکەوتوویی زیاد کرا!`;
+                msgEl.style.display = "block";
+            }
+
+            playChime(true);
+            if (navigator.vibrate) navigator.vibrate([80, 50, 120]);
+
+            const inp1 = document.getElementById("mmTokenCodeInput");
+            const inp2 = document.getElementById("mmTokenModalCodeInp");
+            if (inp1) inp1.value = "";
+            if (inp2) inp2.value = "";
+
+            if (isModal) {
+                setTimeout(() => { mmCloseTokenModal(); }, 1500);
+            }
+        }
+
+        function mmHandleDailySalesTokenDeduction(data, dayKey) {
+            // 1. NEVER deduct tokens during refresh, pull-to-refresh, or background busy state!
+            if (refreshBusy) return;
+            const salesCount = (data && Array.isArray(data.sales)) ? data.sales.length : 0;
+            if (salesCount <= 0) return;
+            const bizDate = String(data?.meta?.businessDate || dayKey || "").trim();
+            if (!bizDate) return;
+
+            const st = mmTokenState || mmLoadTokenState();
+            st.chargedSalesDates = st.chargedSalesDates || {};
+
+            // 2. 100% PERSISTENT LOCK: Deduct AT MOST ONCE per calendar day!
+            // If already charged for this business date, NEVER charge again!
+            if (st.chargedSalesDates[bizDate]) return;
+
+            st.chargedSalesDates[bizDate] = true;
+            st.lastSalesDate = bizDate;
+            st.lastSalesSyncTime = Date.now();
+
+            // 3. Fair single token per entire calendar date (regardless of sales count)
+            const cost = 1;
+
+            if (mmCanSpendTokens(cost, "داتای فرۆشتنی ئەمڕۆ")) {
+                const detailMeta = `${salesCount} وەسڵ · هەموو ڕۆژەکە بە ١ خاڵ (${bizDate})`;
+                mmDeductTokens("sales", cost, "فرۆشتنی ڕۆژانە", detailMeta, true);
+            }
+        }
+
+        // Viewing debt and warehouse is 100% free - zero token deduction
+        function mmHandleDebtTokenDeduction() {}
+        function mmHandleInventoryTokenDeduction() {}
+
+        function initMobileTokens(channelId) {
+            mmTokenState = mmLoadTokenState(channelId);
+            mmUpdateTokenUI();
+
+            const topChip = document.getElementById("topbarTokenChip");
+            if (topChip && !topChip.__bound) {
+                topChip.__bound = true;
+                topChip.addEventListener("click", () => {
+                    switchMobileTab("home");
+                    const card = document.getElementById("mmTokenCard");
+                    if (card) {
+                        card.scrollIntoView({ behavior: "smooth", block: "start" });
+                        const subtabAnalytics = document.querySelector('.mm-token-subtab-btn[data-tab="analytics"]');
+                        if (subtabAnalytics) subtabAnalytics.click();
+                    }
+                });
+            }
+
+            // Subtab navigation inside Token Card
+            document.querySelectorAll(".mm-token-subtab-btn").forEach(btn => {
+                if (!btn.__bound) {
+                    btn.__bound = true;
+                    btn.addEventListener("click", () => {
+                        const tab = btn.getAttribute("data-tab");
+                        document.querySelectorAll(".mm-token-subtab-btn").forEach(b => b.classList.remove("active"));
+                        btn.classList.add("active");
+
+                        const viewAnalytics = document.getElementById("mmTokenViewAnalytics");
+                        const viewHistory = document.getElementById("mmTokenViewHistory");
+                        const viewPacks = document.getElementById("mmTokenViewPacks");
+                        const viewRules = document.getElementById("mmTokenViewRules");
+
+                        if (viewAnalytics) viewAnalytics.style.display = tab === "analytics" ? "block" : "none";
+                        if (viewHistory) viewHistory.style.display = tab === "history" ? "block" : "none";
+                        if (viewPacks) viewPacks.style.display = tab === "packs" ? "block" : "none";
+                        if (viewRules) viewRules.style.display = tab === "rules" ? "block" : "none";
+
+                        if (tab === "analytics" || tab === "history") {
+                            mmUpdateTokenUI();
+                        }
+                    });
+                }
+            });
+
+            const redeemBtn = document.getElementById("mmTokenRedeemBtn");
+            const codeInp = document.getElementById("mmTokenCodeInput");
+            if (redeemBtn && !redeemBtn.__bound) {
+                redeemBtn.__bound = true;
+                redeemBtn.addEventListener("click", () => {
+                    mmRedeemTokenCode(codeInp ? codeInp.value : "", false);
+                });
+            }
+            if (codeInp && !codeInp.__bound) {
+                codeInp.__bound = true;
+                codeInp.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        mmRedeemTokenCode(codeInp.value, false);
+                    }
+                });
+            }
+
+            const modalRedeemBtn = document.getElementById("mmTokenModalRedeemBtn");
+            const modalCodeInp = document.getElementById("mmTokenModalCodeInp");
+            const modalCloseBtn = document.getElementById("mmTokenModalCloseBtn");
+            if (modalRedeemBtn && !modalRedeemBtn.__bound) {
+                modalRedeemBtn.__bound = true;
+                modalRedeemBtn.addEventListener("click", () => {
+                    mmRedeemTokenCode(modalCodeInp ? modalCodeInp.value : "", true);
+                });
+            }
+            if (modalCodeInp && !modalCodeInp.__bound) {
+                modalCodeInp.__bound = true;
+                modalCodeInp.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        mmRedeemTokenCode(modalCodeInp.value, true);
+                    }
+                });
+            }
+            if (modalCloseBtn && !modalCloseBtn.__bound) {
+                modalCloseBtn.__bound = true;
+                modalCloseBtn.addEventListener("click", mmCloseTokenModal);
+            }
+
+            document.querySelectorAll(".mm-token-pack-card").forEach((card) => {
+                if (!card.__bound) {
+                    card.__bound = true;
+                    card.addEventListener("click", () => {
+                        const packKey = card.getAttribute("data-pack");
+                        let packText = "+100 خاڵ · $4";
+                        if (packKey === "mm200") packText = "+200 خاڵ · $8";
+                        if (packKey === "mm400") packText = "+400 خاڵ · $12";
+                        showRefreshToast(`پاکێتی ${packText} هەڵبژێردرا. تکایە کۆدی کڕین چالاک بکە.`, false);
+                        if (codeInp) codeInp.focus();
+                    });
+                }
+            });
+        }
+
         const appShell = document.getElementById("appShell");
 
         onAuthStateChanged(auth, async (user) => {
@@ -2965,6 +4515,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 mmLastCacheSavedAt = null;
                 if (appShell) appShell.classList.remove("is-logged-in");
                 if (refreshBtn) refreshBtn.classList.add("hidden");
+                const topChip = document.getElementById("topbarTokenChip");
+                if (topChip) topChip.classList.add("hidden");
                 if (unsub) { unsub(); unsub = null; }
                 if (unsubDetail) { unsubDetail(); unsubDetail = null; }
                 if (unsubInventory) { unsubInventory(); unsubInventory = null; }
@@ -2990,6 +4542,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const homeEmail = document.getElementById("homeEmail");
             if (homeEmail) homeEmail.textContent = user.email;
             const savedTab = (function () {
+                if (location.hash === "#entry" || location.hash === "#inv" || location.hash === "#dash" || location.hash === "#debt") {
+                    return location.hash.replace("#", "");
+                }
                 try {
                     return localStorage.getItem("pos_mobile_tab") || "home";
                 } catch (e) { return "home"; }
@@ -2998,10 +4553,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 savedTab === "backup" ? "backup" :
                 savedTab === "debt" ? "debt" :
                 savedTab === "inv" ? "inv" :
+                savedTab === "entry" ? "entry" :
                 savedTab === "dash" ? "dash" : "home"
             );
             const channelId = user.email.toLowerCase();
             activeChannelId = channelId;
+            initMobileTokens(channelId);
             mmLoadCachedBusinessMeta(channelId);
             const dayKey = getMobileBusinessDayKey();
             await mmHydrateFromLocalStore(channelId, dayKey);

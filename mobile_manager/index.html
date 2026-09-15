@@ -12,13 +12,13 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Laptop Duhok POS — MOBILE APP v2.18.41</title>
-    <script>window.MM_APP_VERSION = "2.18.41";</script>
-    <link rel="manifest" href="manifest.json?v=2.18.41" />
+    <title>Laptop Duhok POS — MOBILE APP v2.18.51</title>
+    <script>window.MM_APP_VERSION = "2.18.51";</script>
+    <link rel="manifest" href="manifest.json?v=2.18.51" />
     <link rel="icon" href="assets/icons/favicon-32.png" type="image/png" sizes="32x32">
     <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" sizes="180x180">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <link rel="stylesheet" href="css/mm-app.css?v=2.18.41" />
+    <link rel="stylesheet" href="css/mm-app.css?v=2.18.51" />
 
 </head>
 <body>
@@ -35,10 +35,14 @@
                 </div>
                 <div>
                     <p class="brand-title">Laptop Duhok POS</p>
-                    <p class="brand-sub">MOBILE APP <span class="ver-badge" dir="ltr">v2.18.41</span></p>
+                    <p class="brand-sub">MOBILE APP <span class="ver-badge" dir="ltr">v2.18.51</span></p>
                 </div>
             </div>
             <div class="topbar-actions">
+                <div id="topbarTokenChip" class="topbar-token-chip hidden" role="button" tabindex="0" title="خاڵێن مۆبایل مانجێر (Tokens)">
+                    <i class="fas fa-coins"></i>
+                    <span id="topbarTokenVal">300</span>
+                </div>
                 <button type="button" id="refreshBtn" class="refresh-btn hidden" aria-label="نوێکردنەوە" title="Refresh">
                     <i class="fas fa-arrows-rotate"></i>
                 </button>
@@ -58,7 +62,7 @@
                     <h1 class="title">بەڕێوەبەری موبایل</h1>
                     <p class="sub">فرۆشتن · کۆگە · قەرز — تەنها ئیمێیل + تێپەڕەوشە (بێ IP · بێ PIN)</p>
                 </div>
-                <form id="authForm" action="#" method="post" novalidate>
+                <form id="authForm" action="javascript:void(0);" onsubmit="if(window.doLogin){window.doLogin();}return false;" novalidate>
                     <label class="field-label" for="email">ئیمێیل</label>
                     <input id="email" type="email" placeholder="shop01@pos.laptopduhok.com" autocomplete="username" inputmode="email" dir="ltr">
                     <label class="field-label" for="password">تێپەڕەوشە</label>
@@ -97,6 +101,125 @@
                         <h2 class="home-welcome">بەخێر بێیت</h2>
                         <p class="home-email" id="homeEmail">—</p>
                     </div>
+
+                    <!-- Token Manager Widget (وەکی ئەی ئای) -->
+                    <div id="mmTokenCard" class="mm-token-card">
+                        <div class="mm-token-head">
+                            <div class="mm-token-score">
+                                <span class="mm-token-score-dot"></span>
+                                <span id="mmTokenScoreText" dir="ltr">0 / 300</span>
+                            </div>
+                            <span class="mm-token-period-title">سنوورا ۳۰ ڕۆژانە</span>
+                            <span id="mmTokenPlanBadge" class="mm-token-plan-badge">Basic · 300/30 ڕۆژ</span>
+                        </div>
+                        <div class="mm-token-bar-track">
+                            <div id="mmTokenBarFill" class="mm-token-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div class="mm-token-foot">
+                            <span id="mmTokenResetHint">نوێدەبێتەوە ... · 30 ڕۆژ</span>
+                            <span id="mmTokenRemainingHint" class="mm-token-remaining-hint">300 ماوە</span>
+                        </div>
+
+                        <!-- Sub-navigation Tabs inside Token Card -->
+                        <div class="mm-token-subtabs">
+                            <button type="button" class="mm-token-subtab-btn active" data-tab="analytics">
+                                <i class="fas fa-chart-pie"></i> <span>شیکاری (% چەند)</span>
+                            </button>
+                            <button type="button" class="mm-token-subtab-btn" data-tab="history">
+                                <i class="fas fa-clock-rotate-left"></i> <span>مێژووی کرداران</span>
+                            </button>
+                            <button type="button" class="mm-token-subtab-btn" data-tab="packs">
+                                <i class="fas fa-coins"></i> <span>کڕینی خاڵ</span>
+                            </button>
+                            <button type="button" class="mm-token-subtab-btn" data-tab="rules">
+                                <i class="fas fa-gavel"></i> <span>یاساکان</span>
+                            </button>
+                        </div>
+
+                        <!-- VIEW 1: Analytics & Percentage Breakdown (چەند ژ ١٠٠ ل کیڤە چوونە) -->
+                        <div id="mmTokenViewAnalytics" class="mm-token-tab-view">
+                            <div class="mm-analytics-summary-box">
+                                <div class="mm-analytics-title-row">
+                                    <span class="mm-analytics-title"><i class="fas fa-chart-simple" style="color:#6366f1;"></i> خاڵێن مەسرەفبووی (% چەند ژ ١٠٠)</span>
+                                    <span id="mmAnalyticsTotalUsed" class="mm-analytics-badge-total">کۆی: ٠ خاڵ</span>
+                                </div>
+                                <div id="mmCatBreakdownList" class="mm-cat-breakdown-list">
+                                    <!-- Dynamic rows generated by JS: Add, Edit, Sales, Debt, Inv -->
+                                </div>
+                            </div>
+                            <div class="mm-transparency-box">
+                                <div class="mm-transparency-head"><i class="fas fa-shield-halved"></i> گرەنتییا شەفافیەتێ: ڕیفرێش و بینین ۱۰۰٪ خۆڕاییە!</div>
+                                <p class="mm-transparency-text">
+                                    هەرچەندە کلیک ل سەر ڕیفرێش (Refresh) بکەیت یان داتایان ببینی، <strong>هیچ خاڵێک کەم نابێت (٠ خاڵ)</strong>. خاڵ تەنها لە کاتی ئەنجامدانی کاردا دەڕوات: ئیدخالکردنی کاڵای نوێ (٢ خاڵ)، دەستکاری (١ خاڵ)، و فرۆشتنی ڕۆژانە تەنها ١ خاڵ بۆ هەموو ڕۆژەکە.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- VIEW 2: Transaction History Log -->
+                        <div id="mmTokenViewHistory" class="mm-token-tab-view" style="display:none;">
+                            <div class="mm-analytics-summary-box">
+                                <div class="mm-analytics-title-row">
+                                    <span class="mm-analytics-title"><i class="fas fa-receipt" style="color:#38bdf8;"></i> تۆمارا کریارێن خاڵان</span>
+                                    <span id="mmHistoryCountBadge" class="mm-analytics-badge-total">٠ کردار</span>
+                                </div>
+                                <div id="mmTokenHistoryList" class="mm-history-list">
+                                    <div class="mm-history-empty"><i class="fas fa-circle-check" style="color:#10b981;font-size:1.5rem;margin-bottom:6px;display:block;"></i> هێشتا هیچ کردارەک ئەنجام نەدایە</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- VIEW 3: Token Packs & Activation Code -->
+                        <div id="mmTokenViewPacks" class="mm-token-tab-view" style="display:none;">
+                            <div class="mm-token-packs-content" style="margin-top:4px;">
+                                <div class="mm-token-redeem-row">
+                                    <input type="text" id="mmTokenCodeInput" placeholder="کۆدی زیادکردنی خاڵ بنووسە..." dir="ltr" autocomplete="off" />
+                                    <button type="button" id="mmTokenRedeemBtn" class="btn-token-redeem"><i class="fas fa-check"></i> چالاککردن</button>
+                                </div>
+                                <div id="mmTokenRedeemMsg" class="mm-token-redeem-msg" style="display:none;"></div>
+                                <div class="mm-token-fair-title">خاڵەکان درست · نرخ بە $</div>
+                                <div class="mm-token-packs-grid">
+                                    <div class="mm-token-pack-card" data-pack="mm100">
+                                        <div class="mm-pack-bonus">+100 خاڵ</div>
+                                        <div class="mm-pack-gift">+70 دیاری <i class="fas fa-gift"></i></div>
+                                        <div class="mm-pack-price">$4</div>
+                                        <div class="mm-pack-total">= 170 کۆی</div>
+                                    </div>
+                                    <div class="mm-token-pack-card featured" data-pack="mm200">
+                                        <div class="mm-pack-bonus">+200 خاڵ</div>
+                                        <div class="mm-pack-gift">+150 دیاری <i class="fas fa-gift"></i></div>
+                                        <div class="mm-pack-price">$8</div>
+                                        <div class="mm-pack-total">= 350 کۆی</div>
+                                    </div>
+                                    <div class="mm-token-pack-card" data-pack="mm400">
+                                        <div class="mm-pack-bonus">+400 خاڵ</div>
+                                        <div class="mm-pack-gift">+250 دیاری <i class="fas fa-gift"></i></div>
+                                        <div class="mm-pack-price">$12</div>
+                                        <div class="mm-pack-total">= 650 کۆی</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- VIEW 4: Rules -->
+                        <div id="mmTokenViewRules" class="mm-token-tab-view" style="display:none;">
+                            <div class="mm-token-rules-box" style="margin-top:4px;">
+                                <div class="mm-token-rules-title"><i class="fas fa-gavel" style="color:#38bdf8;"></i> یاسایێن شەفاف و دادپەروەری مەسرەفکرنا خاڵان</div>
+                                <ul class="mm-token-rules-list">
+                                    <li><span>ئیدخالکرنا کاڵایێ نوێ (Add Item):</span> <strong class="badge-cost">٢ خاڵ</strong></li>
+                                    <li><span>دەستکاریکرنا کاڵای (Edit Item):</span> <strong class="badge-cost">١ خاڵ</strong></li>
+                                    <li><span>فرۆشتنی ڕۆژانە (Daily Sales Sync):</span> <strong class="badge-cost">١ خاڵ بۆ هەموو ڕۆژەکە</strong></li>
+                                    <li><span>بینینی قەرز و حسابات (Debt):</span> <strong style="color:#10b981;font-weight:800;">خۆڕایی (٠ خاڵ)</strong></li>
+                                    <li><span>کۆگەهـ و مەخزەن (Warehouse):</span> <strong style="color:#10b981;font-weight:800;">خۆڕایی (٠ خاڵ)</strong></li>
+                                    <li><span>ڕیفرێش و نوێکردنەوە (Refresh):</span> <strong style="color:#10b981;font-weight:800;">خۆڕایی (٠ خاڵ)</strong></li>
+                                    <li><span>دیاریا مانگانە:</span> <strong style="color:#10b981;font-weight:800;">٣٠٠ خاڵ دیاری هەر ٣٠ ڕۆژان</strong></li>
+                                </ul>
+                                <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);line-height:1.5;">
+                                    * تێبینی گرنگ: ڕیفرێشکردنی بەرنامە و بینینی داتاکان ١٠٠٪ خۆڕاییە و هیچ خاڵێک ناکێشێتەوە. دیاری مانگانە ۳۰۰ خاڵە و بەشی هەموو مانگەکە دەکات بە خۆشی.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="mmShopsSection" class="mm-shops-section">
                         <div class="mm-shops-head">
                             <h3><i class="fas fa-store"></i> دووکانەکانم</h3>
@@ -127,6 +250,11 @@
                     </div>
                     </div>
                     <div class="home-tiles">
+                        <button type="button" class="home-tile tile-entry" id="homeGoEntry">
+                            <i class="fas fa-barcode"></i>
+                            <strong>ئیدخالا کاڵایان</strong>
+                            <small>سکان ب مۆبایلێ · زێدەکرنا کاڵا</small>
+                        </button>
                         <button type="button" class="home-tile tile-dash" id="homeGoDash">
                             <i class="fas fa-chart-pie"></i>
                             <strong>داشبۆرد</strong>
@@ -260,9 +388,12 @@
                     </div>
                     <div id="invWhBadge" class="inv-wh-badge hidden"><i class="fas fa-boxes-stacked"></i> <span id="invWhName">—</span></div>
 
-                    <div class="inv-scan-row">
-                        <button type="button" id="invScanBtn" class="inv-scan-btn">
-                            <i class="fas fa-barcode"></i> سکان · گەڕان لە کۆگە
+                    <div class="inv-scan-row" style="display:flex;gap:8px;">
+                        <button type="button" id="invScanBtn" class="inv-scan-btn" style="flex:1;">
+                            <i class="fas fa-barcode"></i> سکان · گەڕان
+                        </button>
+                        <button type="button" id="invOpenEntryBtn" class="inv-scan-btn" style="flex:1;background:linear-gradient(135deg, #059669, #10b981);color:#fff;">
+                            <i class="fas fa-plus-circle"></i> ئیدخالا کاڵایان
                         </button>
                     </div>
 
@@ -378,6 +509,296 @@
                     </div>
                 </div>
                 </div>
+
+                <div id="panelEntry" class="app-panel hidden">
+                <div class="card" style="padding-top:16px;">
+                    <div class="dash-header">
+                        <h2 class="dash-title"><i class="fas fa-barcode" style="color:#10b981"></i> ئیدخالا کاڵایان ب مۆبایلێ</h2>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <div id="entrySyncBadge" class="entry-sync-badge"><span class="dot"></span> <span id="entrySyncBadgeTxt">ئامادەیە</span></div>
+                            <span id="entryTokenCostBadge" class="entry-token-cost-badge" title="مەسرەفکرنا خاڵان"><i class="fas fa-coins"></i> ٢ خاڵ</span>
+                        </div>
+                    </div>
+                    <p class="sub" style="margin:0 0 14px;font-size:0.78rem;color:var(--muted);">
+                        سکان ب کامێرێ یان نڤیسین · تاک، پاکێت، کارتۆن و هەمی داتایان
+                    </p>
+
+                    <form id="mmEntryForm" action="javascript:void(0);" onsubmit="event.preventDefault(); return false;">
+                        <input type="hidden" id="mmEntryFoundId" value="0">
+
+                        <!-- SECTION 1: زانیاریێن سەرەتایی -->
+                        <div class="form-group" style="margin-bottom:12px;">
+                            <label class="field-label" for="mmEntryBarcode">بارکۆدێ سەرەکی / تاک (Barcode)</label>
+                            <div class="input-with-btn">
+                                <input id="mmEntryBarcode" type="text" placeholder="بارکۆد بنووسە یان سکان بکە..." autocomplete="off" inputmode="text">
+                                <button type="button" id="mmEntryScanBtn" class="btn-scan-act" title="سکان ب کامێرێ">
+                                    <i class="fas fa-camera"></i>
+                                    <span>سکان</span>
+                                </button>
+                                <button type="button" id="mmEntryAutoBarcodeBtn" class="btn-auto-act" title="دروستکرنا خۆکار">
+                                    <i class="fas fa-magic"></i>
+                                    <span>ئۆتۆ</span>
+                                </button>
+                            </div>
+                            <div id="mmEntryBarcodeStatus" class="barcode-status-box hidden"></div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:12px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                                <label class="field-label" for="mmEntryName" style="margin:0;">ناڤێ کاڵای <span style="color:var(--danger)">*</span></label>
+                                <label for="mmEntryAllowNoName" style="display:flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer;color:var(--muted);">
+                                    <input type="checkbox" id="mmEntryAllowNoName" style="width:auto;margin:0;">
+                                    <span>بێ ناو (بارکۆد + نرخ)</span>
+                                </label>
+                            </div>
+                            <input id="mmEntryName" type="text" placeholder="ناڤێ بەرهەم بنڤیسە..." autocomplete="off" required>
+                        </div>
+
+                        <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                            <div class="form-group" style="margin:0;">
+                                <label class="field-label" for="mmEntryCat">پۆلین (Category)</label>
+                                <div style="display:flex;gap:4px;">
+                                    <input id="mmEntryCat" list="mmEntryCatList" type="text" placeholder="پۆلین هەڵبژێرە..." autocomplete="off" style="flex:1;min-width:0;">
+                                    <select id="mmEntryCatSelect" style="width:36px;padding:0;text-align:center;background:var(--surface-3);color:var(--text);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:0.8rem;" title="هەڵبژارتنا پۆلینێ">
+                                        <option value="">▼</option>
+                                    </select>
+                                </div>
+                                <datalist id="mmEntryCatList"></datalist>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="field-label" for="mmEntryMfr">کۆر / کۆمپانیا</label>
+                                <div style="display:flex;gap:4px;">
+                                    <input id="mmEntryMfr" list="mmEntryMfrList" type="text" placeholder="کۆمپانیا دروستکەر..." autocomplete="off" style="flex:1;min-width:0;">
+                                    <select id="mmEntryMfrSelect" style="width:36px;padding:0;text-align:center;background:var(--surface-3);color:var(--text);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:0.8rem;" title="هەڵبژارتنا کۆمپانیایێ">
+                                        <option value="">▼</option>
+                                    </select>
+                                </div>
+                                <datalist id="mmEntryMfrList"></datalist>
+                            </div>
+                        </div>
+
+                        <!-- SECTION 2: یەکە و ئاستەکانی (تاک + پاکێت + کارتۆن) -->
+                        <div class="entry-unit-toggle-wrap" style="margin-bottom:14px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:10px;">
+                            <div style="font-size:0.78rem;font-weight:700;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                                <i class="fas fa-layer-group" style="color:var(--brand);"></i>
+                                <span>تاک + پاکێت + کارتۆن</span>
+                            </div>
+                            <div class="entry-unit-toggle-row" style="display:flex;gap:8px;">
+                                <button type="button" id="mmTogglePackBtn" class="unit-toggle-btn" role="switch" aria-checked="false">
+                                    <i class="fas fa-boxes"></i> پاکێت: <span class="toggle-state">نینە</span>
+                                </button>
+                                <button type="button" id="mmToggleCartonBtn" class="unit-toggle-btn" role="switch" aria-checked="false">
+                                    <i class="fas fa-box"></i> کارتۆن: <span class="toggle-state">نینە</span>
+                                </button>
+                                <button type="button" id="mmToggleTrackBtn" class="unit-toggle-btn active" role="switch" aria-checked="true">
+                                    <i class="fas fa-cubes"></i> مەخزەن: <span class="toggle-state">هەیە</span>
+                                </button>
+                            </div>
+
+                            <!-- Conversion inputs (appear when pack or carton is active) -->
+                            <div id="mmEntryConvRow" class="grid-2-col" style="display:none;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);">
+                                <div id="mmConvPppWrap" class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryPiecesPerPack" style="margin:0 0 4px;font-size:0.72rem;">دانە ل پاکێتی دا</label>
+                                    <input id="mmEntryPiecesPerPack" type="number" min="1" value="1" inputmode="numeric">
+                                </div>
+                                <div id="mmConvPpcWrap" class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryPacksPerCarton" style="margin:0 0 4px;font-size:0.72rem;">پاکێت ل کارتۆنی دا</label>
+                                    <input id="mmEntryPacksPerCarton" type="number" min="1" value="1" inputmode="numeric">
+                                </div>
+                                <div id="mmConvTotalPreview" style="grid-column:span 2;font-size:0.75rem;color:#38bdf8;font-weight:700;text-align:center;padding-top:4px;"></div>
+                            </div>
+                        </div>
+
+                        <!-- SECTION 3: کارتی نرخ و عەدەدی یەکەکان -->
+                        <!-- Card 1: تاک (Piece) -->
+                        <div class="unit-card unit-card-piece" style="margin-bottom:12px;background:var(--surface-2);border:1px solid rgba(245,158,11,.35);border-radius:14px;padding:12px;">
+                            <div class="unit-card-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <div style="font-weight:800;font-size:0.85rem;color:#f59e0b;display:flex;align-items:center;gap:6px;">
+                                    <i class="fas fa-cube"></i>
+                                    <span>یەکەی تاک (دانە)</span>
+                                </div>
+                                <span style="font-size:0.72rem;background:rgba(245,158,11,.15);color:#f59e0b;padding:2px 8px;border-radius:6px;font-weight:700;">سەرەکی</span>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryPrice" style="margin:0 0 4px;font-size:0.72rem;">فرۆشتن (مفرد) <span style="color:var(--danger)">*</span></label>
+                                    <input id="mmEntryPrice" type="number" step="any" min="0" placeholder="0" inputmode="decimal" required>
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryWholesalePricePiece" style="margin:0 0 4px;font-size:0.72rem;color:#f59e0b;"><i class="fas fa-boxes"></i> بهایێ جملی (دانە)</label>
+                                    <input id="mmEntryWholesalePricePiece" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryCost" style="margin:0 0 4px;font-size:0.72rem;">کڕین (تێچوو)</label>
+                                    <input id="mmEntryCost" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryStockPiece" style="margin:0 0 4px;font-size:0.72rem;">عەدەدی تاک</label>
+                                    <input id="mmEntryStockPiece" type="number" step="any" min="0" value="1" inputmode="decimal">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 2: پاکێت (Pack - conditional) -->
+                        <div id="mmCardPack" class="unit-card unit-card-pack" style="display:none;margin-bottom:12px;background:var(--surface-2);border:1px solid rgba(16,185,129,.35);border-radius:14px;padding:12px;">
+                            <div class="unit-card-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <div style="font-weight:800;font-size:0.85rem;color:#10b981;display:flex;align-items:center;gap:6px;">
+                                    <i class="fas fa-boxes"></i>
+                                    <span>یەکەی پاکێت</span>
+                                </div>
+                                <span style="font-size:0.72rem;background:rgba(16,185,129,.15);color:#34d399;padding:2px 8px;border-radius:6px;font-weight:700;">پاکێت</span>
+                            </div>
+                            <div class="form-group" style="margin-bottom:8px;">
+                                <label class="field-label" for="mmEntryBarcodePack" style="margin:0 0 4px;font-size:0.72rem;">بارکۆدی پاکێت</label>
+                                <div class="input-with-btn">
+                                    <input id="mmEntryBarcodePack" type="text" placeholder="بارکۆدی پاکێت بنووسە یان سکان بکە..." autocomplete="off">
+                                    <button type="button" id="mmEntryScanPackBtn" class="btn-scan-act" style="background:#059669;" title="سکان ب کامێرێ">
+                                        <i class="fas fa-camera"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryPricePack" style="margin:0 0 4px;font-size:0.72rem;">فرۆشتن (مفرد)</label>
+                                    <input id="mmEntryPricePack" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryWholesalePricePack" style="margin:0 0 4px;font-size:0.72rem;color:#10b981;"><i class="fas fa-boxes"></i> بهایێ جملی (پاکێت)</label>
+                                    <input id="mmEntryWholesalePricePack" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryCostPack" style="margin:0 0 4px;font-size:0.72rem;">کڕین (تێچوو)</label>
+                                    <input id="mmEntryCostPack" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryStockPack" style="margin:0 0 4px;font-size:0.72rem;">عەدەدی پاکێت</label>
+                                    <input id="mmEntryStockPack" type="number" step="any" min="0" value="0" inputmode="decimal">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 3: کارتۆن (Carton - conditional) -->
+                        <div id="mmCardCarton" class="unit-card unit-card-carton" style="display:none;margin-bottom:12px;background:var(--surface-2);border:1px solid rgba(59,130,246,.35);border-radius:14px;padding:12px;">
+                            <div class="unit-card-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <div style="font-weight:800;font-size:0.85rem;color:#3b82f6;display:flex;align-items:center;gap:6px;">
+                                    <i class="fas fa-box"></i>
+                                    <span>یەکەی کارتۆن</span>
+                                </div>
+                                <span style="font-size:0.72rem;background:rgba(59,130,246,.15);color:#93c5fd;padding:2px 8px;border-radius:6px;font-weight:700;">کارتۆن</span>
+                            </div>
+                            <div class="form-group" style="margin-bottom:8px;">
+                                <label class="field-label" for="mmEntryBarcodeCarton" style="margin:0 0 4px;font-size:0.72rem;">بارکۆدی کارتۆن</label>
+                                <div class="input-with-btn">
+                                    <input id="mmEntryBarcodeCarton" type="text" placeholder="بارکۆدی کارتۆن بنووسە یان سکان بکە..." autocomplete="off">
+                                    <button type="button" id="mmEntryScanCartonBtn" class="btn-scan-act" style="background:#2563eb;" title="سکان ب کامێرێ">
+                                        <i class="fas fa-camera"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryPriceCarton" style="margin:0 0 4px;font-size:0.72rem;">فرۆشتن (مفرد)</label>
+                                    <input id="mmEntryPriceCarton" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryWholesalePriceCarton" style="margin:0 0 4px;font-size:0.72rem;color:#3b82f6;"><i class="fas fa-boxes"></i> بهایێ جملی (کارتۆن)</label>
+                                    <input id="mmEntryWholesalePriceCarton" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                            </div>
+                            <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryCostCarton" style="margin:0 0 4px;font-size:0.72rem;">کڕین (تێچوو)</label>
+                                    <input id="mmEntryCostCarton" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="field-label" for="mmEntryStockCarton" style="margin:0 0 4px;font-size:0.72rem;">عەدەدی کارتۆن</label>
+                                    <input id="mmEntryStockCarton" type="number" step="any" min="0" value="0" inputmode="decimal">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SECTION 4: کۆی مەخزەن + شێوازی داخڵکردن -->
+                        <div class="stock-summary-box" style="margin-bottom:14px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:12px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <span style="font-size:0.8rem;color:var(--muted);font-weight:700;"><i class="fas fa-calculator"></i> کۆی گشتی کۆگەهـ:</span>
+                                <span id="mmEntryTotalStockBadge" style="font-size:0.88rem;color:#10b981;font-weight:800;background:rgba(16,185,129,.15);padding:3px 10px;border-radius:10px;">1 دانە</span>
+                            </div>
+                            <div id="mmEntryQtyModeWrap" class="qty-mode-toggle hidden" style="display:flex;gap:8px;margin-top:6px;">
+                                <button type="button" class="mode-btn active" id="mmBtnModeAdd">
+                                    <i class="fas fa-plus-circle"></i> + زێدەکرن سەر مەخزەنی
+                                </button>
+                                <button type="button" class="mode-btn" id="mmBtnModeSet">
+                                    <i class="fas fa-pen-to-square"></i> گۆڕینی ڕاستەوخۆ
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- SECTION 5: زانیاریێن پێشکەفتی (جوملە، بەسەرچوون، تێبینی) -->
+                        <details class="entry-advanced-details" style="margin-bottom:16px;background:var(--surface-2);border:1px dashed var(--line);border-radius:14px;padding:10px 12px;">
+                            <summary style="cursor:pointer;font-weight:700;font-size:0.84rem;color:var(--muted);display:flex;align-items:center;justify-content:space-between;">
+                                <span><i class="fas fa-sliders" style="margin-left:6px;color:var(--brand);"></i> زانیاریێن پێشکەفتی (جوملە، بەسەرچوون، هتد)</span>
+                                <i class="fas fa-chevron-down" style="font-size:0.75rem;"></i>
+                            </summary>
+                            <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);">
+                                <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="field-label" for="mmEntryWholesaleQty" style="margin:0 0 4px;font-size:0.72rem;">جوملە: کەمترین عەدەد</label>
+                                        <input id="mmEntryWholesaleQty" type="number" min="0" placeholder="0" inputmode="numeric">
+                                    </div>
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="field-label" for="mmEntryWholesalePrice" style="margin:0 0 4px;font-size:0.72rem;">جوملە: نرخ</label>
+                                        <input id="mmEntryWholesalePrice" type="number" step="any" min="0" placeholder="0" inputmode="decimal">
+                                    </div>
+                                </div>
+                                <div class="grid-2-col" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="field-label" for="mmEntryExpiry" style="margin:0 0 4px;font-size:0.72rem;">بەروارا بەسەرچوونێ</label>
+                                        <input id="mmEntryExpiry" type="date" placeholder="YYYY-MM-DD">
+                                    </div>
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="field-label" for="mmEntryMinStock" style="margin:0 0 4px;font-size:0.72rem;">کەمترین عەدەد (ئاگاداری)</label>
+                                        <input id="mmEntryMinStock" type="number" min="1" placeholder="5" value="5" inputmode="numeric">
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-bottom:10px;">
+                                    <label class="field-label" for="mmEntryNote" style="margin:0 0 4px;font-size:0.72rem;">تێبینی</label>
+                                    <input id="mmEntryNote" type="text" placeholder="تێبینی بۆ کاڵای..." autocomplete="off">
+                                </div>
+                                <label for="mmEntryForSale" style="display:flex;align-items:center;gap:8px;font-size:0.8rem;cursor:pointer;color:var(--text);margin-top:6px;">
+                                    <input type="checkbox" id="mmEntryForSale" checked style="width:auto;margin:0;">
+                                    <span>پیشاندان لە فرۆتن (POS)</span>
+                                </label>
+                            </div>
+                        </details>
+
+                        <!-- SECTION 6: دوگمەکانی تۆمارکردن -->
+                        <div style="display:flex;gap:10px;">
+                            <button type="submit" id="mmEntrySubmitBtn" class="btn-primary btn-entry-save" style="flex:2;margin-top:0;padding:14px;background:linear-gradient(135deg, #10b981, #059669);border:none;border-radius:14px;font-size:1rem;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;box-shadow:0 6px 20px rgba(16,185,129,.35);">
+                                <i class="fas fa-save"></i>
+                                <span>تۆمارکرن د سیستەمی دا</span>
+                            </button>
+                            <button type="button" id="mmEntryResetBtn" class="btn-ghost" style="flex:1;padding:14px;border-radius:14px;font-size:0.88rem;display:flex;align-items:center;justify-content:center;gap:6px;" title="پاککردنەوەی هەمی خانەکان">
+                                <i class="fas fa-eraser"></i>
+                                <span>مساح</span>
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="entry-recent-section" style="margin-top:20px;border-top:1px solid var(--line);padding-top:14px;">
+                        <div class="entry-recent-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                            <span style="font-size:0.85rem;font-weight:700;color:var(--muted);"><i class="fas fa-clock-rotate-left"></i> کاڵایێن دوماهیێ هاتینە زێدەکرن</span>
+                            <span id="mmEntryRecentCount" class="badge-count" style="font-size:0.75rem;padding:2px 8px;border-radius:10px;background:rgba(16,185,129,.15);color:#34d399;font-weight:700;">0 کاڵا</span>
+                        </div>
+                        <div id="mmEntryRecentList" class="entry-recent-list">
+                            <div class="detail-empty" style="text-align:center;color:var(--muted);font-size:0.82rem;padding:12px;">هێشتا هیچ کاڵایەک ل ڤێرێ نەهاتیە زێدەکرن</div>
+                        </div>
+                    </div>
+                </div>
+                </div>
             </div>
         </div>
 
@@ -389,6 +810,10 @@
             <button type="button" id="tabDash" class="nav-tab" aria-pressed="false">
                 <i class="fas fa-chart-pie"></i>
                 <span>داشبۆرد</span>
+            </button>
+            <button type="button" id="tabEntry" class="nav-tab nav-tab-entry" aria-pressed="false">
+                <i class="fas fa-barcode"></i>
+                <span>ئیدخال</span>
             </button>
             <button type="button" id="tabInv" class="nav-tab nav-tab-inv" aria-pressed="false">
                 <i class="fas fa-warehouse"></i>
@@ -430,6 +855,27 @@
                 </div>
             </div>
         </div>
+
+        <!-- Token Exhausted Modal (سنوورا خاڵان) -->
+        <div id="mmTokenModal" class="token-modal-overlay hidden" aria-hidden="true">
+            <div class="token-modal-card">
+                <div class="token-modal-icon"><i class="fas fa-triangle-exclamation"></i></div>
+                <h3 class="token-modal-title">خاڵێن تە تەواو بوونە</h3>
+                <p id="mmTokenModalDesc" class="token-modal-text">
+                    سنوورا خاڵێن تە ل سەر مۆبایلێ تەواو بوو (٠ خاڵ ماون). ئەم کردارە پێویستی ب خاڵان هەیە.
+                </p>
+                <div class="token-modal-safe-note">
+                    <i class="fas fa-shield-check"></i>
+                    <span>سیستەمێ کاشێری سەرەکی ۱۰۰٪ کار دەکات و هیچ کێشەی بۆ دروست نابێت.</span>
+                </div>
+                <div class="mm-token-redeem-row" style="margin-bottom:8px;">
+                    <input type="text" id="mmTokenModalCodeInp" placeholder="کۆدی چالاککردن بنووسە..." dir="ltr" autocomplete="off" />
+                    <button type="button" id="mmTokenModalRedeemBtn" class="btn-token-redeem"><i class="fas fa-check"></i> چالاککردن</button>
+                </div>
+                <div id="mmTokenModalMsg" class="mm-token-redeem-msg" style="display:none;"></div>
+                <button type="button" id="mmTokenModalCloseBtn" class="btn-secondary" style="width:100%;margin-top:8px;">داخستن</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -444,7 +890,7 @@
             measurementId: "G-H2WDDPXK7N"
         };
     </script>
-    <script type="module" src="js/mm-app.js?v=2.18.41"></script>
+    <script type="module" src="js/mm-app.js?v=2.18.51"></script>
 
 </body>
 </html>

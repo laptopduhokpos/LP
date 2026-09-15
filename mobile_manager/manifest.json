@@ -2,7 +2,7 @@
   "id": "laptop-duhok-mobile-manager",
   "name": "Laptop Duhok — بەڕێوەبەری موبایل",
   "short_name": "LD Manager",
-  "description": "داشبۆرد · کۆگە · جەرد · قەرز — sync لە POS",
+  "description": "داشبۆرد · کۆگە · ئیدخال · قەرز — sync لە POS",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
