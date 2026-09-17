@@ -147,32 +147,43 @@ function syncKindUi() {
     if (stockBox) stockBox.style.display = metal ? "none" : "";
     const modeWrap = el("mmJewPriceMode") && el("mmJewPriceMode").closest(".form-group");
     if (modeWrap) modeWrap.style.display = metal ? "none" : "none";
-    lockMoneyFields(metal);
+    lockSellField(metal);
+    unlockCostField();
     previewPrice();
 }
 
-function lockMoneyFields(lock) {
-    ["mmEntryPrice", "mmEntryCost"].forEach(function (id) {
-        const n = el(id);
-        if (!n) return;
-        n.readOnly = !!lock;
-        n.tabIndex = lock ? -1 : 0;
-        n.style.opacity = lock ? "0.92" : "";
-        n.style.pointerEvents = lock ? "none" : "";
-        n.style.background = lock ? "rgba(15,23,42,0.45)" : "";
-        if (lock) delete n.dataset.userPicked;
-        n.placeholder = lock ? "خۆکار ژ گرام" : "0";
-    });
+function lockSellField(lock) {
+    const n = el("mmEntryPrice");
+    if (!n) return;
+    n.readOnly = !!lock;
+    n.tabIndex = lock ? -1 : 0;
+    n.style.opacity = lock ? "0.92" : "";
+    n.style.pointerEvents = lock ? "none" : "";
+    n.style.background = lock ? "rgba(15,23,42,0.45)" : "";
+    n.placeholder = lock ? "خۆکار ژ گرام" : "0";
+}
+
+function unlockCostField() {
+    const n = el("mmEntryCost");
+    if (!n) return;
+    n.readOnly = false;
+    n.tabIndex = 0;
+    n.style.opacity = "";
+    n.style.pointerEvents = "";
+    n.style.background = "";
+    n.placeholder = "گرام × کڕین — یان دەستکاری بکە";
 }
 
 function previewPrice() {
     const hint = el("mmJewPreview");
     if (!isMetalKind()) {
-        lockMoneyFields(false);
+        lockSellField(false);
+        unlockCostField();
         if (hint) hint.textContent = "سەعات / قفڵ / قوطی — نرخێ جێگیر ل خانا فرۆشتنێ بنڤیسە.";
         return;
     }
-    lockMoneyFields(true);
+    lockSellField(true);
+    unlockCostField();
     const grams = num(el("mmJewWeight") && el("mmJewWeight").value);
     const making = num(el("mmJewMaking") && el("mmJewMaking").value);
     const metal = (el("mmJewMetal") && el("mmJewMetal").value) || "silver";
@@ -181,18 +192,24 @@ function previewPrice() {
     const buy = buyRateFor(metal, karat);
     const priceEl = el("mmEntryPrice");
     const costEl = el("mmEntryCost");
+    const costLocked = !!(costEl && costEl.dataset.userPicked === "1");
     if (grams > 0 && rate > 0) {
         const sell = Math.round(grams * rate + making);
         const cost = buy > 0 ? Math.round(grams * buy) : 0;
         if (priceEl) priceEl.value = String(sell);
-        if (costEl) costEl.value = cost > 0 ? String(cost) : "0";
-        if (hint) hint.textContent = "فرۆشتن " + sell.toLocaleString("en-US") + " = گرام × نرخێ ڕۆژ + کرێی کار · کڕین " + (cost ? cost.toLocaleString("en-US") : "—") + " — دەستکاری ناهێت.";
+        if (costEl && !costLocked && !document.body.classList.contains("mm-hide-cost")) costEl.value = cost > 0 ? String(cost) : "0";
+        const shownCost = costEl ? num(costEl.value) : cost;
+        if (hint) {
+            hint.textContent = "فرۆشتن " + sell.toLocaleString("en-US") + " خۆکار ژ گرام · کڕین "
+                + (shownCost ? shownCost.toLocaleString("en-US") : "—")
+                + " دەستکاری دبیت — پشتی تۆمارکرنێ کڕین ناگوهۆڕیت.";
+        }
     } else {
         if (priceEl) priceEl.value = "";
-        if (costEl) costEl.value = "";
+        if (costEl && !costLocked && !document.body.classList.contains("mm-hide-cost")) costEl.value = "";
         if (hint) {
             hint.textContent = rate > 0
-                ? "کێش (گرام) بنڤیسە — بهایێ فرۆشتن و کڕینێ خۆکار دێت."
+                ? "کێش (گرام) بنڤیسە — فرۆشتن خۆکار دێت، کڕین دەستکاری دبیت."
                 : "دوگمێ نرخێ ڕۆژانە بگرە و کڕین/فرۆشتن بنڤیسە.";
         }
     }
@@ -409,6 +426,14 @@ function injectCard() {
     bind("mmJewKarat", "change", previewPrice);
     bind("mmJewWeight", "input", previewPrice);
     bind("mmJewMaking", "input", previewPrice);
+    const costInp = el("mmEntryCost");
+    if (costInp && !costInp.dataset.jewCostBound) {
+        costInp.dataset.jewCostBound = "1";
+        costInp.addEventListener("input", function () {
+            costInp.dataset.userPicked = "1";
+            previewPrice();
+        });
+    }
     bind("mmJewSaveRatesBtn", "click", saveDailyRates);
     bind("mmJewRatesCloseBtn", "click", closeRatesModal);
     fillRatesForm();
@@ -448,7 +473,7 @@ export function mmJewelryInit(opts) {
         title.innerHTML = '<i class="fas fa-coins" style="color:#c9a227"></i> ئیدخالا زیڤ و زێر';
     }
     const sub = document.querySelector("#panelEntry p.sub");
-    if (sub) sub.textContent = "گرام بنڤیسە — فرۆشتن و کڕین خۆکار ژ نرخێ ڕۆژانە. دوگمێ زێڕین = نرخێ ڕۆژ.";
+    if (sub) sub.textContent = "گرام بنڤیسە — فرۆشتن خۆکار. کڕین دەستکاری دبیت و پشتی تۆمارکرنێ ناگوهۆڕیت.";
     injectCard();
     mmJewReady = true;
 }
@@ -489,14 +514,17 @@ export function mmJewelryLiveMoney(p) {
 }
 
 export function mmJewelryCollect() {
-    if (!mmJewReady || !el("mmJewelryCard") || el("mmJewelryCard").style.display === "none") return null;
-    const kind = (el("mmJewKind") && el("mmJewKind").value) || "metal";
+    const kindEl = el("mmJewKind");
+    const weightEl = el("mmJewWeight");
+    const card = el("mmJewelryCard");
+    if (!mmJewReady && !kindEl && !weightEl && !card) return null;
+    const kind = (kindEl && kindEl.value) || "metal";
     if (kind === "piece") {
         return { jewelry_entry_kind: "piece" };
     }
     const metal = (el("mmJewMetal") && el("mmJewMetal").value) || "silver";
     const karat = (el("mmJewKarat") && el("mmJewKarat").value) || (metal === "gold" ? "21" : "925");
-    const weight = num(el("mmJewWeight") && el("mmJewWeight").value);
+    const weight = num(weightEl && weightEl.value);
     const making = num(el("mmJewMaking") && el("mmJewMaking").value);
     return {
         jewelry_entry_kind: "metal",
@@ -506,6 +534,19 @@ export function mmJewelryCollect() {
         making_charge: making,
         jewelry_price_mode: "by_weight"
     };
+}
+
+export function mmJewelryDefaultName() {
+    const jew = mmJewelryCollect();
+    if (!jew || jew.jewelry_entry_kind === "piece") {
+        const bc = (el("mmEntryBarcode") && el("mmEntryBarcode").value || "").trim();
+        return bc ? ("سەعات · " + bc) : "سەعات";
+    }
+    const metalLbl = jew.metal_type === "gold" ? "زێر" : "زیڤ";
+    const parts = [metalLbl];
+    if (jew.karat) parts.push(String(jew.karat));
+    if (Number(jew.weight_grams) > 0) parts.push(String(Math.round(Number(jew.weight_grams) * 1000) / 1000) + "گ");
+    return parts.join(" · ");
 }
 
 export function mmJewelryFill(p) {
@@ -519,6 +560,11 @@ export function mmJewelryFill(p) {
     if (el("mmJewWeight")) el("mmJewWeight").value = Number(p.weight_grams) > 0 ? String(p.weight_grams) : "";
     if (el("mmJewMaking")) el("mmJewMaking").value = Number(p.making_charge) > 0 ? String(p.making_charge) : "";
     if (el("mmJewPriceMode")) el("mmJewPriceMode").value = "by_weight";
+    const costEl = el("mmEntryCost");
+    if (costEl && Number(p.cost) > 0 && !document.body.classList.contains("mm-hide-cost")) {
+        costEl.value = String(Math.round(Number(p.cost)));
+        costEl.dataset.userPicked = "1";
+    }
     syncKindUi();
 }
 

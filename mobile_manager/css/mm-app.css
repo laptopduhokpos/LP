@@ -708,6 +708,7 @@
         .line-row .amt { font-weight: 800; color: #fbbf24; }
         .line-row .amt.purchase { color: #0ea5e9; }
         .mm-privacy-off { display: none !important; }
+        body.mm-hide-cost .mm-cost-privacy { display: none !important; }
         .mm-privacy-note { color: var(--muted); font-size: 0.84rem; display: flex; align-items: center; gap: 8px; }
         .mm-privacy-note i { color: #f59e0b; }
 

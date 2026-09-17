@@ -38,6 +38,7 @@ function mmBuildTodayReportHtml(ctx) {
     const privacy = ctx.privacy || {};
     const hideProfit = !!privacy.hideProfit;
     const hideSalesDetail = !!privacy.hideSalesDetail;
+    const hideCost = !!privacy.hideCost;
     const sales = hideSalesDetail ? [] : (Array.isArray(detail.sales) ? detail.sales : []);
     const returns = Array.isArray(detail.returns) ? detail.returns : [];
     const expenses = Array.isArray(detail.expenses) ? detail.expenses : [];
@@ -74,7 +75,7 @@ function mmBuildTodayReportHtml(ctx) {
 
     let purchaseRows = "";
     purchases.slice(0, 20).forEach(function (p) {
-        purchaseRows += "<tr><td>" + esc(p.invoiceNo || "—") + "</td><td>" + esc(p.company || "—") + "</td><td class=\"num\">" + fmt(p.total) + "</td></tr>";
+        purchaseRows += "<tr><td>" + esc(p.invoiceNo || "—") + "</td><td>" + esc(p.company || "—") + "</td><td class=\"num\">" + (hideCost ? "— · شاردراوە" : fmt(p.total)) + "</td></tr>";
     });
     if (!purchaseRows) purchaseRows = "<tr><td colspan=\"3\" class=\"empty\">—</td></tr>";
 
@@ -124,7 +125,7 @@ function mmBuildTodayReportHtml(ctx) {
         "<div class=\"shop\">" + esc(ctx.shopLabel || ctx.shopEmail || "دووکان") + "</div>" +
         "<div class=\"date\"><i>📅</i> " + esc(dayLabel) + " · دراو: " + esc(cur) + "</div></div>" +
         "<div class=\"note\">تەنها بینین — ژمارەکان لە POS sync دەکرێن · " + esc(ctx.shopEmail || "") +
-        (hideProfit || hideSalesDetail ? " · <strong>هەندێک بەش شاردراوە</strong>" : "") + "</div>" +
+        (hideProfit || hideSalesDetail || hideCost ? " · <strong>هەندێک بەش شاردراوە</strong>" : "") + "</div>" +
         (hideProfit
             ? "<div class=\"hero\" style=\"background:linear-gradient(160deg,#f1f5f9,#e2e8f0);border-color:#94a3b8;\"><div class=\"lbl\">قازانجی خاو</div><div class=\"val\" style=\"color:#64748b;font-size:1.35rem;\">— · شاردراوە</div><div class=\"sub\">لە ڕێکخستنەکانی POS شاردراوە</div></div>"
             : "<div class=\"hero\"><div class=\"lbl\">قازانجی خاو (ئەمڕۆ)</div><div class=\"val\">" + net + "</div><div class=\"sub\">دوای مەسرەف و گەڕانەوە</div></div>") +

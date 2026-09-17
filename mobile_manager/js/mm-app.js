@@ -23,7 +23,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
-        const MM_JEWELRY_JS_V = "2.18.59";
+        const MM_JEWELRY_JS_V = "2.18.61";
         let mmJewelryMod = null;
         let mmShopIsJewelry = false;
         window.mmJewelryRates = null;
@@ -1315,6 +1315,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
         let mobileAmountMeta = { amountCurrency: "IQD", posDisplayCurrency: "IQD", syncVersion: 3, usdRatePerOne: 0 };
         const MM_PRIVACY_HIDDEN = "— · شاردراوە";
+        let mmPrivacyState = { hideProfit: false, hideSalesDetail: false, hideCost: false };
 
         function mmPrivacyFromDoc(d) {
             const doc = d || {};
@@ -1322,15 +1323,30 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const m = doc.meta || {};
             return {
                 hideProfit: !!(p.hideProfit || m.hideProfit),
-                hideSalesDetail: !!(p.hideSalesDetail || m.hideSalesDetail)
+                hideSalesDetail: !!(p.hideSalesDetail || m.hideSalesDetail),
+                hideCost: !!(p.hideCost || m.hideCost)
             };
         }
 
         function mmApplyProfitPrivacyUi(hideProfit) {
+            mmPrivacyState.hideProfit = !!hideProfit;
             const kpiFeatured = document.querySelector(".kpi-featured");
             const homeNetTile = document.querySelector(".home-mini.net");
             if (kpiFeatured) kpiFeatured.classList.toggle("mm-privacy-off", !!hideProfit);
             if (homeNetTile) homeNetTile.classList.toggle("mm-privacy-off", !!hideProfit);
+        }
+
+        function mmApplyCostPrivacyUi(hideCost) {
+            mmPrivacyState.hideCost = !!hideCost;
+            document.body.classList.toggle("mm-hide-cost", !!hideCost);
+        }
+
+        function mmMergePrivacyFromDoc(d) {
+            const p = mmPrivacyFromDoc(d);
+            mmPrivacyState = Object.assign({}, mmPrivacyState, p);
+            mmApplyProfitPrivacyUi(mmPrivacyState.hideProfit);
+            mmApplyCostPrivacyUi(mmPrivacyState.hideCost);
+            return mmPrivacyState;
         }
 
         function getMobileDisplayCurrency() {
@@ -1900,7 +1916,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
 
             html += '<div class="inv-table-wrap"><table class="inv-table"><thead><tr>' +
                 "<th>بارکۆد</th><th>ناو</th><th>پۆل</th><th>کۆمپانیا دروستکەر</th>" +
-                "<th>تێچوو</th><th>نرخ</th><th>ژمارە</th><th>کەمترین</th><th>بەسەرچوون</th><th>دۆخ</th>" +
+                (mmPrivacyState.hideCost ? "" : "<th>تێچوو</th>") +
+                "<th>نرخ</th><th>ژمارە</th><th>کەمترین</th><th>بەسەرچوون</th><th>دۆخ</th>" +
                 "</tr></thead><tbody>";
 
             list.forEach((p) => {
@@ -1911,14 +1928,15 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 const showPrice = (live.sell > 0) ? live.sell : p.price;
                 const st = p.status || "ok";
                 let rowCls = "";
-                if (p.lossPrice) rowCls = "inv-tr-loss";
+                const showLoss = !mmPrivacyState.hideCost && p.lossPrice;
+                if (showLoss) rowCls = "inv-tr-loss";
                 else if (st === "out") rowCls = "inv-tr-out";
                 else if (st === "low") rowCls = "inv-tr-low";
-                const lossHint = p.lossPrice
+                const lossHint = showLoss
                     ? '<small><i class="fas fa-exclamation-circle"></i> بهای کڕین > فرۆشتن</small>'
                     : "";
                 let badges = '<span class="inv-badge ' + st + '">' + esc(p.statusLabel || st) + "</span>";
-                if (p.lossPrice) {
+                if (showLoss) {
                     badges += '<span class="inv-badge loss"><i class="fas fa-triangle-exclamation"></i> زیان</span>';
                 }
                 html += '<tr class="' + rowCls + '">' +
@@ -1926,7 +1944,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     '<td class="inv-td-name">' + esc(p.name || "—") + lossHint + "</td>" +
                     "<td>" + esc(p.category || "—") + "</td>" +
                     "<td>" + esc(p.manufacturer || "—") + "</td>" +
-                    '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(showCost)) + "</td>" +
+                    (mmPrivacyState.hideCost ? "" : ('<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(showCost)) + "</td>")) +
                     '<td class="inv-td-money">' + formatMoneyIqd(normalizeMobileIqd(showPrice)) + "</td>" +
                     '<td class="inv-td-qty ' + st + '">' + formatQty(p.qty) + "</td>" +
                     "<td>" + esc(p.minStock != null ? p.minStock : "—") + "</td>" +
@@ -2585,7 +2603,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (catEl) catEl.value = found.category || "";
             if (mfrEl) mfrEl.value = found.manufacturer || "";
             if (priceEl) priceEl.value = (found.price !== undefined && found.price !== null) ? found.price : "";
-            if (costEl) costEl.value = (found.cost !== undefined && found.cost !== null) ? found.cost : "";
+            if (!mmPrivacyState.hideCost && costEl) costEl.value = (found.cost !== undefined && found.cost !== null) ? found.cost : "";
             if (stockPieceEl) stockPieceEl.value = "1";
 
             // Piece wholesale price
@@ -2610,7 +2628,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 const twPack = (found.takeawayPrice_pack !== undefined && found.takeawayPrice_pack !== null && Number(found.takeawayPrice_pack) > 0) ? found.takeawayPrice_pack : "";
                 wpPackEl.value = twPack;
             }
-            if (cPackEl) cPackEl.value = (found.cost_pack !== undefined && found.cost_pack !== null) ? found.cost_pack : "";
+            if (cPackEl && !mmPrivacyState.hideCost) cPackEl.value = (found.cost_pack !== undefined && found.cost_pack !== null) ? found.cost_pack : "";
             if (sPackEl) sPackEl.value = "0";
             if (pppEl) pppEl.value = found.pieces_per_pack || 1;
 
@@ -2629,7 +2647,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 const twCarton = (found.takeawayPrice_carton !== undefined && found.takeawayPrice_carton !== null && Number(found.takeawayPrice_carton) > 0) ? found.takeawayPrice_carton : "";
                 wpCartonEl.value = twCarton;
             }
-            if (cCartonEl) cCartonEl.value = (found.cost_carton !== undefined && found.cost_carton !== null) ? found.cost_carton : "";
+            if (cCartonEl && !mmPrivacyState.hideCost) cCartonEl.value = (found.cost_carton !== undefined && found.cost_carton !== null) ? found.cost_carton : "";
             if (sCartonEl) sCartonEl.value = "0";
             if (ppcEl) ppcEl.value = found.packs_per_carton || 1;
 
@@ -2927,6 +2945,44 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             const barcode = (document.getElementById("mmEntryBarcode")?.value || "").trim();
             const allowNoName = !!(document.getElementById("mmEntryAllowNoName")?.checked);
             let name = (document.getElementById("mmEntryName")?.value || "").trim();
+            let jewPayload = null;
+            if (mmShopIsJewelry) {
+                if (mmJewelryMod && typeof mmJewelryMod.mmJewelryCollect === "function") {
+                    jewPayload = mmJewelryMod.mmJewelryCollect();
+                }
+                if (!jewPayload) {
+                    const kindEl = document.getElementById("mmJewKind");
+                    const weightEl = document.getElementById("mmJewWeight");
+                    if (kindEl || weightEl) {
+                        const kind = (kindEl && kindEl.value) || "metal";
+                        if (kind === "piece") {
+                            jewPayload = { jewelry_entry_kind: "piece" };
+                        } else {
+                            const metal = (document.getElementById("mmJewMetal") && document.getElementById("mmJewMetal").value) || "silver";
+                            const karat = (document.getElementById("mmJewKarat") && document.getElementById("mmJewKarat").value) || (metal === "gold" ? "21" : "925");
+                            const wRaw = parseFloat(String((weightEl && weightEl.value) || "").replace(/,/g, ""));
+                            const mRaw = parseFloat(String((document.getElementById("mmJewMaking") && document.getElementById("mmJewMaking").value) || "").replace(/,/g, ""));
+                            jewPayload = {
+                                jewelry_entry_kind: "metal",
+                                metal_type: metal,
+                                karat: karat,
+                                weight_grams: Number.isFinite(wRaw) ? wRaw : 0,
+                                making_charge: Number.isFinite(mRaw) ? mRaw : 0,
+                                jewelry_price_mode: "by_weight"
+                            };
+                        }
+                    }
+                }
+                if (!name && mmJewelryMod && typeof mmJewelryMod.mmJewelryDefaultName === "function") {
+                    name = String(mmJewelryMod.mmJewelryDefaultName() || "").trim();
+                } else if (!name && jewPayload && jewPayload.jewelry_entry_kind !== "piece") {
+                    const metalLbl = jewPayload.metal_type === "gold" ? "زێر" : "زیڤ";
+                    const parts = [metalLbl];
+                    if (jewPayload.karat) parts.push(String(jewPayload.karat));
+                    if (Number(jewPayload.weight_grams) > 0) parts.push(String(Math.round(Number(jewPayload.weight_grams) * 1000) / 1000) + "گ");
+                    name = parts.join(" · ");
+                }
+            }
             const cat = (document.getElementById("mmEntryCat")?.value || "").trim();
             const mfr = (document.getElementById("mmEntryMfr")?.value || "").trim();
 
@@ -3026,9 +3082,12 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 forSale: forSale,
                 added_at: Date.now()
             };
-            if (mmShopIsJewelry && mmJewelryMod && typeof mmJewelryMod.mmJewelryCollect === "function") {
-                const jew = mmJewelryMod.mmJewelryCollect();
-                if (jew) Object.assign(itemPayload, jew);
+            if (jewPayload) Object.assign(itemPayload, jewPayload);
+            if (mmPrivacyState.hideCost && isEdit) {
+                itemPayload.omitCost = true;
+                delete itemPayload.cost;
+                delete itemPayload.cost_pack;
+                delete itemPayload.cost_carton;
             }
 
             let savedLocally = false;
@@ -3043,7 +3102,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     fd.append("barcode", itemPayload.barcode);
                     fd.append("name", itemPayload.name);
                     fd.append("price", itemPayload.price);
-                    fd.append("cost", itemPayload.cost);
+                    if (itemPayload.omitCost) {
+                        fd.append("keep_cost", "1");
+                    } else {
+                        fd.append("cost", itemPayload.cost);
+                    }
                     fd.append("qty", itemPayload.qty);
                     fd.append("qty_mode", itemPayload.qty_mode);
                     fd.append("category", itemPayload.category);
@@ -3057,9 +3120,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     fd.append("barcode_pack", itemPayload.barcode_pack);
                     fd.append("barcode_carton", itemPayload.barcode_carton);
                     if (itemPayload.price_pack != null) fd.append("price_pack", itemPayload.price_pack);
-                    if (itemPayload.cost_pack != null) fd.append("cost_pack", itemPayload.cost_pack);
+                    if (!itemPayload.omitCost && itemPayload.cost_pack != null) fd.append("cost_pack", itemPayload.cost_pack);
                     if (itemPayload.price_carton != null) fd.append("price_carton", itemPayload.price_carton);
-                    if (itemPayload.cost_carton != null) fd.append("cost_carton", itemPayload.cost_carton);
+                    if (!itemPayload.omitCost && itemPayload.cost_carton != null) fd.append("cost_carton", itemPayload.cost_carton);
                     if (itemPayload.takeawayPrice) fd.append("takeawayPrice", itemPayload.takeawayPrice);
                     if (itemPayload.takeawayPrice_pack) fd.append("takeawayPrice_pack", itemPayload.takeawayPrice_pack);
                     if (itemPayload.takeawayPrice_carton) fd.append("takeawayPrice_carton", itemPayload.takeawayPrice_carton);
@@ -3070,9 +3133,9 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     if (itemPayload.note) fd.append("note", itemPayload.note);
                     fd.append("forSale", itemPayload.forSale);
                     if (itemPayload.metal_type) fd.append("metal_type", itemPayload.metal_type);
-                    if (itemPayload.karat != null) fd.append("karat", itemPayload.karat);
-                    if (itemPayload.weight_grams != null) fd.append("weight_grams", itemPayload.weight_grams);
-                    if (itemPayload.making_charge != null) fd.append("making_charge", itemPayload.making_charge);
+                    if (itemPayload.karat != null && itemPayload.karat !== "") fd.append("karat", itemPayload.karat);
+                    if (itemPayload.weight_grams != null && itemPayload.weight_grams !== "") fd.append("weight_grams", itemPayload.weight_grams);
+                    if (itemPayload.making_charge != null && itemPayload.making_charge !== "") fd.append("making_charge", itemPayload.making_charge);
                     if (itemPayload.jewelry_price_mode) fd.append("jewelry_price_mode", itemPayload.jewelry_price_mode);
                     if (itemPayload.jewelry_entry_kind) fd.append("jewelry_entry_kind", itemPayload.jewelry_entry_kind);
 
@@ -3384,9 +3447,8 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 try { mmApplyShopChannel("market"); } catch (eNoDash) {}
                 return;
             }
-            const priv = mmPrivacyFromDoc(d);
+            const priv = mmMergePrivacyFromDoc(d);
             mmUpdateShopBusinessMeta(d, { silent: opts.silent || opts.fromCache });
-            mmApplyProfitPrivacyUi(priv.hideProfit);
             kpiSales.textContent = formatMoneyIqd(normalizeMobileIqd(d.salesToday));
             kpiExpenses.textContent = formatMoneyIqd(normalizeMobileIqd(d.expensesToday));
             kpiNet.textContent = priv.hideProfit ? MM_PRIVACY_HIDDEN : formatMoneyIqd(normalizeMobileIqd(d.netProfitToday));
@@ -3458,6 +3520,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (opts.fromCache) mmNoteCacheSavedAt(opts.savedAt);
             mmUpdateShopBusinessMeta(data, { silent: true });
             setMobileAmountMeta(data);
+            mmMergePrivacyFromDoc(data);
             const summary = data.summary || {};
             const meta = data.meta || {};
             const products = Array.isArray(data.products) ? data.products : [];
@@ -3529,7 +3592,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             if (opts.fromCache) mmNoteCacheSavedAt(opts.savedAt);
             mmUpdateShopBusinessMeta(data, { silent: true });
             const meta = data.meta || {};
-            const priv = mmPrivacyFromDoc(data);
+            const priv = mmMergePrivacyFromDoc(data);
             setMobileAmountMeta(data);
             const sales = priv.hideSalesDetail ? [] : (Array.isArray(data.sales) ? data.sales : []);
             // NEVER deduct tokens during refresh, pull-to-refresh, or from cache
@@ -3546,7 +3609,10 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             html += '<div class="detail-h purchases"><i class="fas fa-truck"></i> کڕین (' + purchases.length + ")</div>";
             if (!purchases.length) html += '<div class="detail-empty">—</div>';
             else purchases.slice(0, 100).forEach((p) => {
-                html += '<div class="line-row purchase-row"><span><strong>' + esc(p.invoiceNo || "—") + '</strong><span class="purchase-co"> · ' + esc(p.company || "—") + "</span></span><span class=\"amt purchase\">" + formatMoneyIqd(normalizeMobileIqd(p.total)) + "</span></div>";
+                const amt = priv.hideCost
+                    ? MM_PRIVACY_HIDDEN
+                    : formatMoneyIqd(normalizeMobileIqd(p.total));
+                html += '<div class="line-row purchase-row"><span><strong>' + esc(p.invoiceNo || "—") + '</strong><span class="purchase-co"> · ' + esc(p.company || "—") + "</span></span><span class=\"amt purchase\">" + amt + "</span></div>";
             });
             html += '<div class="detail-h sales"><i class="fas fa-receipt"></i> فرۆشتن (' + (priv.hideSalesDetail ? "—" : sales.length) + ")</div>";
             if (priv.hideSalesDetail) {
@@ -3617,7 +3683,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                     dayKey: mmSnapDetailDayKey || getMobileBusinessDayKey(),
                     dashboard: mmSnapDashboard,
                     detail: mmSnapDetail || {},
-                    privacy: mmPrivacyFromDoc(Object.assign({}, mmSnapDashboard || {}, mmSnapDetail || {})),
+                    privacy: mmMergePrivacyFromDoc(Object.assign({}, mmSnapDashboard || {}, mmSnapDetail || {})),
                     inv: mmSnapInvSummary || {},
                     debt: mmSnapDebtSummary || {},
                     currency: getMobileDisplayCurrency(),
