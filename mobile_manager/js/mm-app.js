@@ -1317,23 +1317,64 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         const MM_PRIVACY_HIDDEN = "— · شاردراوە";
         let mmPrivacyState = { hideProfit: false, hideSalesDetail: false, hideCost: false };
 
-        function mmPrivacyFromDoc(d) {
+        function mmPrivacyLsKey(channelId) {
+            const id = String(channelId || activeChannelId || "").trim().toLowerCase();
+            return id ? ("mm_privacy_v1:" + id) : "";
+        }
+
+        function mmSavePrivacyToLs() {
+            const key = mmPrivacyLsKey();
+            if (!key) return;
+            try {
+                localStorage.setItem(key, JSON.stringify({
+                    hideProfit: !!mmPrivacyState.hideProfit,
+                    hideSalesDetail: !!mmPrivacyState.hideSalesDetail,
+                    hideCost: !!mmPrivacyState.hideCost
+                }));
+            } catch (ePrivLs) {}
+        }
+
+        function mmLoadPrivacyFromLs(channelId) {
+            const key = mmPrivacyLsKey(channelId);
+            if (!key) return;
+            try {
+                const raw = JSON.parse(localStorage.getItem(key) || "null");
+                if (!raw || typeof raw !== "object") return;
+                mmPrivacyState.hideProfit = !!raw.hideProfit;
+                mmPrivacyState.hideSalesDetail = !!raw.hideSalesDetail;
+                mmPrivacyState.hideCost = !!raw.hideCost;
+                mmApplyProfitPrivacyUi(mmPrivacyState.hideProfit);
+                mmApplyCostPrivacyUi(mmPrivacyState.hideCost);
+            } catch (ePrivLoad) {}
+        }
+
+        function mmPrivacyFlagPresent(obj, key) {
+            return !!(obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key));
+        }
+
+        function mmPrivacyPatchFromDoc(d) {
             const doc = d || {};
-            const p = doc.privacy || {};
-            const m = doc.meta || {};
+            const p = (doc.privacy && typeof doc.privacy === "object") ? doc.privacy : null;
+            const m = (doc.meta && typeof doc.meta === "object") ? doc.meta : null;
+            const patch = {};
+            ["hideProfit", "hideSalesDetail", "hideCost"].forEach(function (k) {
+                if (mmPrivacyFlagPresent(p, k)) patch[k] = !!p[k];
+                else if (mmPrivacyFlagPresent(m, k)) patch[k] = !!m[k];
+            });
+            return patch;
+        }
+
+        function mmPrivacyFromDoc(d) {
+            const patch = mmPrivacyPatchFromDoc(d);
             return {
-                hideProfit: !!(p.hideProfit || m.hideProfit),
-                hideSalesDetail: !!(p.hideSalesDetail || m.hideSalesDetail),
-                hideCost: !!(p.hideCost || m.hideCost)
+                hideProfit: !!patch.hideProfit,
+                hideSalesDetail: !!patch.hideSalesDetail,
+                hideCost: !!patch.hideCost
             };
         }
 
         function mmApplyProfitPrivacyUi(hideProfit) {
             mmPrivacyState.hideProfit = !!hideProfit;
-            const kpiFeatured = document.querySelector(".kpi-featured");
-            const homeNetTile = document.querySelector(".home-mini.net");
-            if (kpiFeatured) kpiFeatured.classList.toggle("mm-privacy-off", !!hideProfit);
-            if (homeNetTile) homeNetTile.classList.toggle("mm-privacy-off", !!hideProfit);
         }
 
         function mmApplyCostPrivacyUi(hideCost) {
@@ -1347,10 +1388,19 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         }
 
         function mmMergePrivacyFromDoc(d) {
-            const p = mmPrivacyFromDoc(d);
-            mmPrivacyState = Object.assign({}, mmPrivacyState, p);
-            mmApplyProfitPrivacyUi(mmPrivacyState.hideProfit);
-            mmApplyCostPrivacyUi(mmPrivacyState.hideCost);
+            const prevHideProfit = !!mmPrivacyState.hideProfit;
+            const prevHideCost = !!mmPrivacyState.hideCost;
+            const patch = mmPrivacyPatchFromDoc(d);
+            if (Object.keys(patch).length) {
+                mmPrivacyState = Object.assign({}, mmPrivacyState, patch);
+                mmSavePrivacyToLs();
+            }
+            if (prevHideProfit !== !!mmPrivacyState.hideProfit) {
+                mmApplyProfitPrivacyUi(mmPrivacyState.hideProfit);
+            }
+            if (prevHideCost !== !!mmPrivacyState.hideCost) {
+                mmApplyCostPrivacyUi(mmPrivacyState.hideCost);
+            }
             return mmPrivacyState;
         }
 
@@ -3437,14 +3487,14 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
                 }
                 kpiSales.textContent = formatMobileMoney(0);
                 kpiExpenses.textContent = formatMobileMoney(0);
-                kpiNet.textContent = formatMobileMoney(0);
+                kpiNet.textContent = mmPrivacyState.hideProfit ? MM_PRIVACY_HIDDEN : formatMobileMoney(0);
                 kpiInvoices.textContent = "0";
-                mmApplyProfitPrivacyUi(false);
+                mmApplyProfitPrivacyUi(mmPrivacyState.hideProfit);
                 metaEl.innerHTML = '<i class="fas fa-clock"></i> دوایین نوێکردنەوە: هێشتا داتا نییە';
                 updateHomeSyncText("دوایین sync: هێشتا داتا نییە");
                 const hNet0 = document.getElementById("homeNet");
                 const hSales0 = document.getElementById("homeSales");
-                if (hNet0) hNet0.textContent = formatMobileMoney(0);
+                if (hNet0) hNet0.textContent = mmPrivacyState.hideProfit ? MM_PRIVACY_HIDDEN : formatMobileMoney(0);
                 if (hSales0) hSales0.textContent = formatMobileMoney(0);
                 if (!opts.silent) setStatus("چاوەڕێی یەکەم sync", false);
                 mmSnapDashboard = null;
@@ -4768,6 +4818,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             );
             const channelId = user.email.toLowerCase();
             activeChannelId = channelId;
+            mmLoadPrivacyFromLs(channelId);
             try { mmApplyShopChannel("market"); } catch (eJewReset) {}
             initMobileTokens(channelId);
             mmLoadCachedBusinessMeta(channelId);
