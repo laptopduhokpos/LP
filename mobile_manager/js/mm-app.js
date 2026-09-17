@@ -23,7 +23,7 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
             mmSnapDetailType
         } from "./mm-snapshot-store.js?v=2.18.13";
 
-        const MM_JEWELRY_JS_V = "2.18.61";
+        const MM_JEWELRY_JS_V = "2.18.63";
         let mmJewelryMod = null;
         let mmShopIsJewelry = false;
         window.mmJewelryRates = null;
@@ -1339,6 +1339,11 @@ import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.
         function mmApplyCostPrivacyUi(hideCost) {
             mmPrivacyState.hideCost = !!hideCost;
             document.body.classList.toggle("mm-hide-cost", !!hideCost);
+            try {
+                if (mmJewelryMod && typeof mmJewelryMod.mmJewelryApplyCostPrivacy === "function") {
+                    mmJewelryMod.mmJewelryApplyCostPrivacy(!!hideCost);
+                }
+            } catch (eJewPriv) {}
         }
 
         function mmMergePrivacyFromDoc(d) {

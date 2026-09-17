@@ -200,45 +200,87 @@ function previewPrice() {
         if (costEl && !costLocked && !document.body.classList.contains("mm-hide-cost")) costEl.value = cost > 0 ? String(cost) : "0";
         const shownCost = costEl ? num(costEl.value) : cost;
         if (hint) {
-            hint.textContent = "فرۆشتن " + sell.toLocaleString("en-US") + " خۆکار ژ گرام · کڕین "
-                + (shownCost ? shownCost.toLocaleString("en-US") : "—")
-                + " دەستکاری دبیت — پشتی تۆمارکرنێ کڕین ناگوهۆڕیت.";
+            hint.textContent = mmHideBuyOnMobile()
+                ? ("فرۆشتن " + sell.toLocaleString("en-US") + " خۆکار ژ گرام")
+                : ("فرۆشتن " + sell.toLocaleString("en-US") + " خۆکار ژ گرام · کڕین "
+                    + (shownCost ? shownCost.toLocaleString("en-US") : "—")
+                    + " دەستکاری دبیت — پشتی تۆمارکرنێ کڕین ناگوهۆڕیت.");
         }
     } else {
         if (priceEl) priceEl.value = "";
         if (costEl && !costLocked && !document.body.classList.contains("mm-hide-cost")) costEl.value = "";
         if (hint) {
             hint.textContent = rate > 0
-                ? "کێش (گرام) بنڤیسە — فرۆشتن خۆکار دێت، کڕین دەستکاری دبیت."
-                : "دوگمێ نرخێ ڕۆژانە بگرە و کڕین/فرۆشتن بنڤیسە.";
+                ? (mmHideBuyOnMobile() ? "کێش (گرام) بنڤیسە — فرۆشتن خۆکار دێت." : "کێش (گرام) بنڤیسە — فرۆشتن خۆکار دێت، کڕین دەستکاری دبیت.")
+                : (mmHideBuyOnMobile() ? "دوگمێ نرخێ ڕۆژانە بگرە و فرۆشتن بنڤیسە." : "دوگمێ نرخێ ڕۆژانە بگرە و کڕین/فرۆشتن بنڤیسە.");
         }
     }
     updateFabChip();
 }
 
+function mmHideBuyOnMobile() {
+    return !!(document.body && document.body.classList.contains("mm-hide-cost"));
+}
+
+function applyJewBuyPrivacyUi() {
+    const hide = mmHideBuyOnMobile();
+    const modal = el("mmJewRatesModal");
+    if (modal) modal.classList.toggle("mm-jew-hide-buy", hide);
+    ["mmJewBuy18", "mmJewBuy21", "mmJewBuy22", "mmJewBuy24"].forEach((id) => {
+        const n = el(id);
+        if (!n) return;
+        n.classList.add("mm-jew-buy");
+        n.disabled = hide;
+        n.readOnly = hide;
+        if (hide) n.value = "";
+    });
+    document.querySelectorAll("#mmJewSilverRates [data-sg-buy]").forEach((n) => {
+        n.classList.add("mm-jew-buy");
+        n.disabled = hide;
+        n.readOnly = hide;
+        if (hide) n.value = "";
+    });
+    const help = modal && modal.querySelector(".mm-jew-help");
+    if (help) {
+        help.textContent = hide
+            ? "فرۆشتنا هەر گرامێک — نرخێ کرینێ ل موبایل شاردراوە."
+            : "کڕین و فرۆشتنا هەر گرامێک — ل لاپتۆب و موبایل پێکڤە دگوهۆڕیت.";
+    }
+}
+
 function fillRatesForm() {
     const r = normalizeRates(mmJewRates);
+    const hideBuy = mmHideBuyOnMobile();
     const setVal = (id, v) => {
         const n = el(id);
         if (n) n.value = v > 0 ? String(v) : "";
     };
-    setVal("mmJewBuy18", r.buyGold18);
+    if (!hideBuy) {
+        setVal("mmJewBuy18", r.buyGold18);
+        setVal("mmJewBuy21", r.buyGold21);
+        setVal("mmJewBuy22", r.buyGold22);
+        setVal("mmJewBuy24", r.buyGold24);
+    } else {
+        setVal("mmJewBuy18", 0);
+        setVal("mmJewBuy21", 0);
+        setVal("mmJewBuy22", 0);
+        setVal("mmJewBuy24", 0);
+    }
     setVal("mmJewSell18", r.gold18);
-    setVal("mmJewBuy21", r.buyGold21);
     setVal("mmJewSell21", r.gold21);
-    setVal("mmJewBuy22", r.buyGold22);
     setVal("mmJewSell22", r.gold22);
-    setVal("mmJewBuy24", r.buyGold24);
     setVal("mmJewSell24", r.gold24);
     const list = el("mmJewSilverRates");
-    if (!list) return;
-    list.innerHTML = r.silverGrades.map((g, i) => `
+    if (list) {
+        list.innerHTML = r.silverGrades.map((g, i) => `
         <div class="mm-jew-rate-row" data-sg-i="${i}">
             <span class="mm-jew-rate-k">${escapeHtml(g.name || g.code)}</span>
-            <input type="number" min="0" step="1" inputmode="numeric" dir="ltr" data-sg-buy placeholder="کڕین" value="${g.buy > 0 ? g.buy : ""}">
+            <input type="number" min="0" step="1" inputmode="numeric" dir="ltr" class="mm-jew-buy" data-sg-buy placeholder="کڕین" value="${(!hideBuy && g.buy > 0) ? g.buy : ""}">
             <input type="number" min="0" step="1" inputmode="numeric" dir="ltr" data-sg-sell placeholder="فرۆشتن" value="${g.sell > 0 ? g.sell : ""}">
         </div>
     `).join("");
+    }
+    applyJewBuyPrivacyUi();
 }
 
 function escapeHtml(s) {
@@ -261,7 +303,7 @@ function readRatesFromForm() {
             grades.push({
                 code: prev.code,
                 name: prev.name || prev.code,
-                buy: money(buyEl && buyEl.value),
+                buy: mmHideBuyOnMobile() ? (prev.buy || 0) : money(buyEl && buyEl.value),
                 sell: money(sellEl && sellEl.value)
             });
         });
@@ -273,10 +315,10 @@ function readRatesFromForm() {
         gold21: money(el("mmJewSell21") && el("mmJewSell21").value),
         gold22: money(el("mmJewSell22") && el("mmJewSell22").value),
         gold24: money(el("mmJewSell24") && el("mmJewSell24").value),
-        buyGold18: money(el("mmJewBuy18") && el("mmJewBuy18").value),
-        buyGold21: money(el("mmJewBuy21") && el("mmJewBuy21").value),
-        buyGold22: money(el("mmJewBuy22") && el("mmJewBuy22").value),
-        buyGold24: money(el("mmJewBuy24") && el("mmJewBuy24").value),
+        buyGold18: mmHideBuyOnMobile() ? r.buyGold18 : money(el("mmJewBuy18") && el("mmJewBuy18").value),
+        buyGold21: mmHideBuyOnMobile() ? r.buyGold21 : money(el("mmJewBuy21") && el("mmJewBuy21").value),
+        buyGold22: mmHideBuyOnMobile() ? r.buyGold22 : money(el("mmJewBuy22") && el("mmJewBuy22").value),
+        buyGold24: mmHideBuyOnMobile() ? r.buyGold24 : money(el("mmJewBuy24") && el("mmJewBuy24").value),
         silver: primary.sell,
         buySilver: primary.buy,
         silverGrades: grades
@@ -313,6 +355,7 @@ function closeRatesModal() {
 
 function saveDailyRates() {
     const rates = readRatesFromForm();
+    if (mmHideBuyOnMobile()) rates.keepBuy = true;
     mmJewRates = rates;
     window.mmJewelryRates = rates;
     fillKaratOptions();
@@ -353,14 +396,14 @@ function injectCard() {
             </div>
             <p class="mm-jew-help">کڕین و فرۆشتنا هەر گرامێک — ل لاپتۆب و موبایل پێکڤە دگوهۆڕیت.</p>
             <div class="mm-jew-sub">زیڤ</div>
-            <div class="mm-jew-rate-head"><span>دەرجە</span><span>کڕین</span><span>فرۆشتن</span></div>
+            <div class="mm-jew-rate-head"><span>دەرجە</span><span class="mm-jew-buy">کڕین</span><span>فرۆشتن</span></div>
             <div id="mmJewSilverRates"></div>
             <div class="mm-jew-sub" style="margin-top:10px;">زێر</div>
-            <div class="mm-jew-rate-head"><span>عیار</span><span>کڕین</span><span>فرۆشتن</span></div>
-            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">21K</span><input id="mmJewBuy21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">18K</span><input id="mmJewBuy18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">22K</span><input id="mmJewBuy22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
-            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">24K</span><input id="mmJewBuy24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-head"><span>عیار</span><span class="mm-jew-buy">کڕین</span><span>فرۆشتن</span></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">21K</span><input id="mmJewBuy21" class="mm-jew-buy" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell21" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">18K</span><input id="mmJewBuy18" class="mm-jew-buy" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell18" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">22K</span><input id="mmJewBuy22" class="mm-jew-buy" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell22" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
+            <div class="mm-jew-rate-row"><span class="mm-jew-rate-k">24K</span><input id="mmJewBuy24" class="mm-jew-buy" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="کڕین"><input id="mmJewSell24" type="number" min="0" step="1" inputmode="numeric" dir="ltr" placeholder="فرۆشتن"></div>
             <button type="button" id="mmJewSaveRatesBtn" class="mm-jew-save-btn"><i class="fas fa-save"></i> پاراستن</button>
             <p id="mmJewRatesMsg" class="mm-jew-msg"></p>
         </div>
@@ -464,6 +507,7 @@ export function mmJewelryInit(opts) {
     document.body.classList.add("mm-jewelry-shop");
     if (mmJewReady && el("mmJewelryCard") && el("mmJewRatesFab")) {
         if (opts.rates) mmJewelrySetRates(opts.rates);
+        mmJewelryApplyCostPrivacy();
         return;
     }
     if (opts.rates) mmJewRates = normalizeRates(opts.rates);
@@ -476,6 +520,7 @@ export function mmJewelryInit(opts) {
     if (sub) sub.textContent = "گرام بنڤیسە — فرۆشتن خۆکار. کڕین دەستکاری دبیت و پشتی تۆمارکرنێ ناگوهۆڕیت.";
     injectCard();
     mmJewReady = true;
+    mmJewelryApplyCostPrivacy();
 }
 
 export function mmJewelrySetRates(rates) {
@@ -547,6 +592,13 @@ export function mmJewelryDefaultName() {
     if (jew.karat) parts.push(String(jew.karat));
     if (Number(jew.weight_grams) > 0) parts.push(String(Math.round(Number(jew.weight_grams) * 1000) / 1000) + "گ");
     return parts.join(" · ");
+}
+
+export function mmJewelryApplyCostPrivacy(hideCost) {
+    if (hideCost === true) document.body.classList.add("mm-hide-cost");
+    if (hideCost === false) document.body.classList.remove("mm-hide-cost");
+    if (mmJewReady) fillRatesForm();
+    else applyJewBuyPrivacyUi();
 }
 
 export function mmJewelryFill(p) {
